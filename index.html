@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- ── Favicon ─────────────────────────────────────────────────────── -->
+    <link rel="icon" type="image/png" sizes="64x64" href="./favicon.png" />
+    <link rel="icon" type="image/svg+xml" href="./fdi-logo.svg" />
+
+    <!-- ── PWA Manifest ─────────────────────────────────────────────────── -->
+    <link rel="manifest" href="./manifest.json" />
+
+    <!-- ── PWA: iOS Safari (Apple) ──────────────────────────────────────── -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="FDI PM" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-192.png" />
+
+    <!-- ── PWA: Android / Windows ───────────────────────────────────────── -->
+    <meta name="theme-color" content="#1e293b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="FDI PM" />
+
+    <!-- ── SEO & Social ─────────────────────────────────────────────────── -->
+    <meta name="description" content="FDI PM - Hệ thống quản lý dự án đầu tư xây dựng FDI" />
+    <meta name="keywords" content="FDI PM, quan ly du an, xay dung, phap ly, tien do" />
+
+    <title>FDI PM</title>
+
+    <!-- ── Đăng ký Service Worker ───────────────────────────────────────── -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          var swUrl = location.pathname.startsWith('/QuanLyTaiLieu') ? '/QuanLyTaiLieu/sw.js' : '/sw.js';
+          var swScope = location.pathname.startsWith('/QuanLyTaiLieu') ? '/QuanLyTaiLieu/' : '/';
+          navigator.serviceWorker.register(swUrl, { scope: swScope })
+            .then(function(reg) {
+              console.log('[PWA] Service Worker registered, scope:', reg.scope);
+            })
+            .catch(function(err) {
+              console.warn('[PWA] Service Worker registration failed:', err);
+            });
+        });
+      }
+    </script>
+    <script type="module" crossorigin src="/FDI-PM/assets/index-D3SX2k8S.js"></script>
+    <link rel="modulepreload" crossorigin href="/FDI-PM/assets/rolldown-runtime-DWdDZTNf.js">
+    <link rel="modulepreload" crossorigin href="/FDI-PM/assets/vendor-react-select-D3ccvh8o.js">
+    <link rel="modulepreload" crossorigin href="/FDI-PM/assets/vendor-firebase-Bi8K_X3j.js">
+    <link rel="modulepreload" crossorigin href="/FDI-PM/assets/createLucideIcon-QSg3fJvT.js">
+    <link rel="modulepreload" crossorigin href="/FDI-PM/assets/preload-helper-BDSXm39X.js">
+    <link rel="modulepreload" crossorigin href="/FDI-PM/assets/vendor-recharts-BVQ87SYr.js">
+    <link rel="modulepreload" crossorigin href="/FDI-PM/assets/vendor-zip-CZ327o61.js">
+    <link rel="modulepreload" crossorigin href="/FDI-PM/assets/pen-BDNcryBG.js">
+    <link rel="stylesheet" crossorigin href="/FDI-PM/assets/index-pyTBy21f.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
