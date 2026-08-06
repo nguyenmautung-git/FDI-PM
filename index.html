@@ -32,10 +32,13 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function() {
-          var swUrl = location.pathname.startsWith('/QuanLyTaiLieu') ? '/QuanLyTaiLieu/sw.js' : '/sw.js';
-          var swScope = location.pathname.startsWith('/QuanLyTaiLieu') ? '/QuanLyTaiLieu/' : '/';
+          var path = location.pathname;
+          var base = path.startsWith('/FDI-PM') ? '/FDI-PM' : (path.startsWith('/QuanLyTaiLieu') ? '/QuanLyTaiLieu' : '');
+          var swUrl = base + '/sw.js';
+          var swScope = base + '/';
           navigator.serviceWorker.register(swUrl, { scope: swScope })
             .then(function(reg) {
+              reg.update();
               console.log('[PWA] Service Worker registered, scope:', reg.scope);
             })
             .catch(function(err) {

@@ -1,8 +1,9 @@
 // ── Service Worker cho PWA QuanLyDuAn ────────────────────────────────────
 // Chiến lược: Cache-First cho static assets, Network-First cho API/Firebase
 
-const CACHE_NAME = 'qlda-fdi-v4';
-const BASE = location.pathname.startsWith('/QuanLyTaiLieu') ? '/QuanLyTaiLieu' : '';
+const CACHE_NAME = 'fdi-pm-v10';
+const pathName = location.pathname;
+const BASE = pathName.startsWith('/FDI-PM') ? '/FDI-PM' : (pathName.startsWith('/QuanLyTaiLieu') ? '/QuanLyTaiLieu' : '');
 
 // Các file cần cache ngay khi SW install (App Shell)
 const PRECACHE_URLS = [
@@ -21,14 +22,17 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// ── Activate: xóa cache cũ ───────────────────────────────────────────────
+// ── Activate: xóa toàn bộ cache cũ ───────────────────────────────────────────────
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
           .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
+          .map((name) => {
+            console.log('[SW] Xóa cache cũ:', name);
+            return caches.delete(name);
+          })
       );
     }).then(() => self.clients.claim())
   );
