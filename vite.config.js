@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: process.env.VITE_BASE || '/FDI-PM/',
+  base: process.env.VITE_BASE || './',
   build: {
     // html2pdf là lazy chunk (~935kB) — không load khi khởi động app
     // Các chunk vendor còn lại đều < 400kB, an toàn với limit này
