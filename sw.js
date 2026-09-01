@@ -1,7 +1,7 @@
 // ── Service Worker cho PWA QuanLyDuAn ────────────────────────────────────
 // Chiến lược: Cache-First cho static assets, Network-First cho API/Firebase
 
-const CACHE_NAME = 'fdi-pm-v10';
+const CACHE_NAME = 'fdi-pm-v11';
 const pathName = location.pathname;
 const BASE = pathName.startsWith('/FDI-PM') ? '/FDI-PM' : (pathName.startsWith('/QuanLyTaiLieu') ? '/QuanLyTaiLieu' : '');
 
