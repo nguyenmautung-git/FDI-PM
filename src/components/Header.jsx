@@ -1,13 +1,13 @@
 import React, { useContext, useState, useRef, useEffect, useMemo } from 'react';
 import { ROLES } from '../constants';
-import { Search, Bell, Plus, User, FileText, X, LogOut, Camera, FolderOpen, Smartphone } from 'lucide-react';
+import { Search, Bell, Plus, User, FileText, X, LogOut, Camera, FolderOpen, Smartphone, ArrowLeft, Home } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { DocumentContext } from '../context/DocumentContext';
 import ProfileModal from './ProfileModal';
 import { useToast } from '../context/UIContext';
 
-const Header = ({ currentView, onOpenForm, onNavigate, onSearchSelect }) => {
+const Header = ({ currentView, onOpenForm, onNavigate, onGoBack, onGoHome, onSearchSelect }) => {
   const { getNewCount, markAsRead, isDocNew, documents, projects, members, userRole, toggleRole, canAddDocument } = useContext(DocumentContext);
   const [showNoti, setShowNoti] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -98,6 +98,51 @@ const Header = ({ currentView, onOpenForm, onNavigate, onSearchSelect }) => {
 
   return (
     <header className="header">
+      {/* ── Nút Back & Home điều hướng nhanh ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <button
+          type="button"
+          className="btn-icon"
+          onClick={onGoBack}
+          title="Quay lại trang trước (Phím Back / Backspace)"
+          style={{
+            padding: '0.45rem',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'var(--color-bg-surface-hover)',
+            color: 'var(--color-text-main)',
+            border: '1px solid var(--color-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.15s'
+          }}
+        >
+          <ArrowLeft size={18} />
+        </button>
+
+        <button
+          type="button"
+          className="btn-icon"
+          onClick={onGoHome}
+          title="Về trang chủ (Phím Home)"
+          style={{
+            padding: '0.45rem',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'var(--color-bg-surface-hover)',
+            color: currentView === 'overview' ? 'var(--color-primary)' : 'var(--color-text-main)',
+            border: currentView === 'overview' ? '1px solid rgba(59,130,246,0.4)' : '1px solid var(--color-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.15s'
+          }}
+        >
+          <Home size={18} />
+        </button>
+      </div>
+
       {/* ── Ô tìm kiếm toàn cục ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1, maxWidth: '500px' }} ref={searchRef}>
         <div style={{ position: 'relative', width: '100%' }}>

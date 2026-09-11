@@ -29,15 +29,42 @@ const formatPhone = (phone) => {
   return `${cleaned.slice(0, 4)} ${cleaned.slice(4, 7)} ${cleaned.slice(7)}`;
 };
 
+const getRoleBadgeStyle = (roleName) => {
+  const name = (roleName || '').toLowerCase();
+  if (name === 'admin' || name.includes('quản trị')) {
+    return { bg: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', border: 'rgba(239, 68, 68, 0.3)' };
+  }
+  if (name.includes('giám đốc') || name.includes('gd') || name.includes('pm') || name.includes('chủ trì')) {
+    return { bg: 'rgba(99, 102, 241, 0.15)', color: '#818cf8', border: 'rgba(99, 102, 241, 0.3)' };
+  }
+  if (name.includes('thư ký') || name.includes('trợ lý')) {
+    return { bg: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', border: 'rgba(245, 158, 11, 0.3)' };
+  }
+  return { bg: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: 'rgba(16, 185, 129, 0.3)' };
+};
+
 const Members = () => {
-  const { members, addMember, editMember, deleteMember, userRole, enableLazy } = useContext(DocumentContext);
+  const { members, addMember, editMember, deleteMember, userRole, enableLazy, globalLists, projectRoleMatrix } = useContext(DocumentContext);
   useEffect(() => { enableLazy(); }, [enableLazy]);
   const confirm = useConfirm();
+
+  const availableRoles = React.useMemo(() => {
+    let list = [];
+    if (globalLists?.projectRoles && globalLists.projectRoles.length > 0) {
+      list = globalLists.projectRoles.map(item => item.name);
+    } else if (projectRoleMatrix) {
+      list = Object.keys(projectRoleMatrix);
+    }
+    const others = list.filter(r => r !== 'Admin' && r !== 'User');
+    return ['Admin', ...others];
+  }, [globalLists?.projectRoles, projectRoleMatrix]);
+
+  const defaultRole = availableRoles[1] || availableRoles[0] || 'Thành viên dự án';
 
   // Guard: User không được vào trang này
   if (false && userRole !== ROLES.ADMIN) return <AccessDenied />;
   const [isAdding, setIsAdding] = useState(false);
-  const [newMember, setNewMember] = useState({ name: '', email: '', phone: '', role: 'User', level: 1, avatar: '' });
+  const [newMember, setNewMember] = useState({ name: '', email: '', phone: '', role: defaultRole, level: 1, avatar: '' });
   const [editingId, setEditingId] = useState(null);
   const [editFormData, setEditFormData] = useState({});
   const [viewingMember, setViewingMember] = useState(null);
@@ -48,11 +75,12 @@ const Members = () => {
     if (newMember.name && newMember.email) {
       await addMember({ 
         ...newMember, 
+        role: newMember.role || defaultRole,
         avatar: newMember.avatar || `https://i.pravatar.cc/150?img=${Math.floor(Math.random() * 70)}`,
         locked: false
       });
       setIsAdding(false);
-      setNewMember({ name: '', email: '', phone: '', role: 'User', level: 1, avatar: '' });
+      setNewMember({ name: '', email: '', phone: '', role: defaultRole, level: 1, avatar: '' });
     }
   };
 
@@ -74,7 +102,7 @@ const Members = () => {
       const canvas = document.createElement('canvas');
       let width = img.width;
       let height = img.height;
-      const MAX_DIMENSION = 800;
+      const MAX_DIMENSION = 300;
       
       if (width > height && width > MAX_DIMENSION) {
         height *= MAX_DIMENSION / width;
@@ -125,22 +153,6 @@ const Members = () => {
     setEditingId(null);
   };
 
-  const handleExportPDF = async (member) => {
-    const element = document.getElementById('member-printable-area');
-    if (!element) return;
-
-    const opt = {
-      margin:       10,
-      filename:     `info_${member.name}.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
-      html2canvas:  { scale: 2, useCORS: true, logging: false },
-      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-
-    const html2pdf = (await import('html2pdf.js')).default;
-    html2pdf().set(opt).from(element).save();
-  };
-
   const filteredMembers = members.filter(m => {
     const matchKeyword = !filters.keyword || 
       (m.name && m.name.toLowerCase().includes(filters.keyword.toLowerCase())) || 
@@ -152,16 +164,20 @@ const Members = () => {
   });
 
   return (
-    <div className="card" style={{ padding: '1.5rem', minHeight: '80vh' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.25rem', fontWeight: '600' }}>Quản lý Thành viên</h2>
+    <div className="fade-in" style={{ paddingBottom: '2rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <div>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: '700', color: 'var(--color-text-main)', marginBottom: '0.25rem' }}>Quản lý Thành viên</h1>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>Quản lý danh sách thành viên CĐT và phân quyền trong hệ thống</p>
+        </div>
         {userRole === ROLES.ADMIN && (
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button className="btn btn-outline" onClick={() => setShowInvite(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-              📨 Mời qua email
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button className="btn btn-outline" onClick={() => setShowInvite(true)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Share2 size={16} /> Mời thành viên
             </button>
             <button className="btn btn-primary" onClick={() => setIsAdding(!isAdding)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <UserPlus size={18} /> {isAdding ? 'Hủy' : 'Thêm trực tiếp'}
+              {isAdding ? <X size={16} /> : <UserPlus size={16} />}
+              {isAdding ? 'Đóng form' : 'Thêm thành viên'}
             </button>
           </div>
         )}
@@ -177,8 +193,9 @@ const Members = () => {
             <label className="form-label" style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Vai trò</label>
             <select className="input-field" value={filters.role} onChange={(e) => setFilters({...filters, role: e.target.value})}>
               <option value="">Tất cả vai trò</option>
-              <option value="Admin">Admin</option>
-              <option value="User">User</option>
+              {availableRoles.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
             </select>
           </div>
           <div className="form-group" style={{ marginBottom: 0, flex: '1 1 160px' }}>
@@ -210,8 +227,9 @@ const Members = () => {
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">Vai trò</label>
             <select className="input-field" value={newMember.role} onChange={(e) => setNewMember({...newMember, role: e.target.value})}>
-              <option value="User">User</option>
-              <option value="Admin">Admin</option>
+              {availableRoles.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
             </select>
           </div>
           <div className="form-group" style={{ marginBottom: 0 }}>
@@ -262,8 +280,9 @@ const Members = () => {
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Vai trò</label>
                   <select className="input-field" value={editFormData.role} onChange={(e) => setEditFormData({...editFormData, role: e.target.value})}>
-                    <option value="User">User</option>
-                    <option value="Admin">Admin</option>
+                    {availableRoles.map(r => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
@@ -290,13 +309,19 @@ const Members = () => {
                 <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.25rem' }}>{member.name}</h3>
                 
                 <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <span style={{ 
-                    backgroundColor: member.role === 'Admin' ? 'rgba(115, 169, 130, 0.15)' : 'rgba(130, 168, 209, 0.15)', 
-                    color: member.role === 'Admin' ? 'var(--color-success)' : 'var(--color-primary)', 
-                    padding: '0.25rem 0.75rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: '600' 
-                  }}>
-                    {member.role}
-                  </span>
+                  {(() => {
+                    const rStyle = getRoleBadgeStyle(member.role);
+                    return (
+                      <span style={{ 
+                        backgroundColor: rStyle.bg, 
+                        color: rStyle.color, 
+                        border: `1px solid ${rStyle.border}`,
+                        padding: '0.25rem 0.75rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: '600' 
+                      }}>
+                        {member.role || 'Chưa phân vai trò'}
+                      </span>
+                    );
+                  })()}
                   <span title={EMPLOYEE_LEVELS.find(l => l.id === member.level)?.fullName} style={{ 
                     backgroundColor: 'rgba(240, 173, 78, 0.15)', 
                     color: '#d97706', 

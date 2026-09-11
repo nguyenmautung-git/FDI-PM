@@ -57,18 +57,17 @@ const DocumentCard = ({ document, viewMode, isSelected, onToggleSelect }) => {
       <>
         <div
           className="card"
+          onClick={() => setIsPreview(true)}
           style={{
             display: 'flex', padding: '1rem', gap: '1.5rem', alignItems: 'center',
             outline: isSelected ? '2px solid rgba(59,130,246,0.5)' : 'none',
             background: isSelected ? 'rgba(59,130,246,0.05)' : undefined,
-            transition: 'outline 0.15s, background 0.15s',
+            transition: 'outline 0.15s, background 0.15s, transform 0.2s, box-shadow 0.2s',
+            cursor: 'pointer'
           }}
+          onMouseOver={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 18px rgba(0,0,0,0.12)'; }}
+          onMouseOut={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.1)'; }}
         >
-          {/* Preview thumbnail */}
-          <div style={{ width: '120px', height: '80px', borderRadius: 'var(--radius-md)', overflow: 'hidden', flexShrink: 0 }}>
-            <img src={quickViewImage} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          </div>
-
           {/* Info */}
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
@@ -108,6 +107,7 @@ const DocumentCard = ({ document, viewMode, isSelected, onToggleSelect }) => {
                   <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <a href={file.url} target="_blank" rel="noreferrer"
                       className="badge"
+                      onClick={e => e.stopPropagation()}
                       style={{ backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border)', color: 'var(--color-primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px', padding: '0.25rem 0.5rem', flex: 1 }}
                       title={file.name}
                     >
@@ -125,7 +125,7 @@ const DocumentCard = ({ document, viewMode, isSelected, onToggleSelect }) => {
                 ))}
               </div>
             ) : attachmentLink && (
-              <a href={attachmentLink} target="_blank" rel="noreferrer" className="btn btn-outline" style={{ padding: '0.5rem' }} title="Tải xuống">
+              <a href={attachmentLink} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="btn btn-outline" style={{ padding: '0.5rem' }} title="Tải xuống">
                 <Download size={16} />
               </a>
             )}
@@ -151,6 +151,7 @@ const DocumentCard = ({ document, viewMode, isSelected, onToggleSelect }) => {
           </div>
         </div>
         {isEditing && <DocumentForm initialData={document} onClose={() => setIsEditing(false)} />}
+        {isPreview && <DocumentForm initialData={document} previewMode={true} onClose={() => setIsPreview(false)} />}
         {pdfFile && <PdfViewerModal file={pdfFile} onClose={() => setPdfFile(null)} />}
       </>
     );

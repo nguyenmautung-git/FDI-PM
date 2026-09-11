@@ -68,7 +68,7 @@ const ErrorForm = ({ initialData, generatedCode, onSubmit, onCancel, activeTabId
 };
 
 // ─── Error Card Component ────────────────────────────────────────────────────
-const ErrorCard = ({ error, viewMode, onEdit, onDelete, isAdmin }) => {
+const ErrorCard = ({ error, viewMode, onEdit, onDelete, canEdit }) => {
   const { id, code, title, description, prevention, severity, author } = error;
   
   const getSeverityColor = (sev) => {
@@ -98,7 +98,7 @@ const ErrorCard = ({ error, viewMode, onEdit, onDelete, isAdmin }) => {
             <strong>Phòng ngừa:</strong> {prevention}
           </p>
         </div>
-        {isAdmin && (
+        {canEdit && (
           <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column' }}>
             <button onClick={() => onEdit(error)} className="btn-icon" style={{ backgroundColor: 'rgba(255, 255, 255, 0.1)', border: '1px solid var(--color-border)', color: 'var(--color-primary)', width: '32px', height: '32px' }} title="Sửa lỗi">
               <Edit size={16} />
@@ -125,7 +125,7 @@ const ErrorCard = ({ error, viewMode, onEdit, onDelete, isAdmin }) => {
           </div>
           <h3 style={{ fontSize: '1.125rem', fontWeight: '700', marginTop: '0.5rem', marginBottom: '0', color: 'var(--color-text-main)' }}>{title}</h3>
         </div>
-        {isAdmin && (
+        {canEdit && (
           <div style={{ display: 'flex', gap: '4px', opacity: 0.8 }}>
             <button onClick={(e) => { e.stopPropagation(); onEdit(error); }} className="btn-icon" style={{ backgroundColor: 'transparent', border: 'none', color: 'var(--color-primary)', width: '28px', height: '28px' }} title="Sửa lỗi">
               <Edit size={16} />
@@ -159,6 +159,7 @@ const DanhMucLoi = () => {
     editDefectError,
     deleteDefectError,
     userRole,
+    canEditDefects,
     enableLazy
   } = useContext(DocumentContext);
 
@@ -183,7 +184,7 @@ const DanhMucLoi = () => {
     }
   }, [tabs, activeTabId]);
 
-  const isAdmin = userRole === ROLES.ADMIN;
+  const canEdit = userRole === ROLES.ADMIN || userRole === 'Admin' || (canEditDefects && canEditDefects());
 
   const getPrefix = (tabName) => {
     if (!tabName) return 'ERR';
@@ -212,7 +213,7 @@ const DanhMucLoi = () => {
   };
 
   const handleAddTab = async () => {
-    if (!isAdmin) return;
+    if (!canEdit) return;
     const name = window.prompt("Nhập tên thẻ lỗi mới:");
     if (name && name.trim() !== "") {
       const newId = await addDefectTab(name);
@@ -221,7 +222,7 @@ const DanhMucLoi = () => {
   };
 
   const handleEditTab = async (id, oldName) => {
-    if (!isAdmin) return;
+    if (!canEdit) return;
     const newName = window.prompt("Sửa tên thẻ:", oldName);
     if (newName && newName.trim() !== "") {
       await editDefectTab(id, newName);
@@ -229,7 +230,7 @@ const DanhMucLoi = () => {
   };
 
   const handleDeleteTab = async (id) => {
-    if (!isAdmin) return;
+    if (!canEdit) return;
     const ok = await confirm('Bạn có chắc muốn xóa thẻ này? Mọi lỗi trong thẻ sẽ không hiển thị nữa.');
     if (ok) {
       await deleteDefectTab(id);
@@ -243,7 +244,7 @@ const DanhMucLoi = () => {
   };
 
   const handleSaveError = async (data) => {
-    if (!isAdmin) return;
+    if (!canEdit) return;
     if (data.id) {
       await editDefectError(data.id, data);
     } else {
@@ -254,7 +255,7 @@ const DanhMucLoi = () => {
   };
 
   const handleDeleteError = async (id) => {
-    if (!isAdmin) return;
+    if (!canEdit) return;
     const ok = await confirm('Bạn có chắc muốn xóa lỗi này?');
     if (ok) {
       await deleteDefectError(id);
@@ -295,7 +296,7 @@ const DanhMucLoi = () => {
         </div>
         
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          {isAdmin && (
+          {canEdit && (
             <button 
               onClick={() => { setEditingError(null); setIsFormOpen(true); }}
               className="btn btn-primary" 
@@ -321,7 +322,7 @@ const DanhMucLoi = () => {
         {tabs.map(tab => (
           <div key={tab.id} style={{ display: 'flex', alignItems: 'center', padding: '0.75rem 1.25rem', cursor: 'pointer', borderBottom: activeTabId === tab.id ? '2px solid var(--color-primary)' : '2px solid transparent', color: activeTabId === tab.id ? 'var(--color-primary)' : 'var(--color-text-muted)', fontWeight: activeTabId === tab.id ? '600' : '500', transition: 'all 0.2s', marginBottom: '-2px', backgroundColor: activeTabId === tab.id ? 'rgba(59, 130, 246, 0.05)' : 'transparent', borderTopLeftRadius: '6px', borderTopRightRadius: '6px' }}>
             <span onClick={() => setActiveTabId(tab.id)}>{tab.name}</span>
-            {isAdmin && activeTabId === tab.id && (
+            {canEdit && activeTabId === tab.id && (
               <div style={{ display: 'flex', alignItems: 'center', marginLeft: '8px', gap: '4px' }}>
                 <button onClick={(e) => { e.stopPropagation(); handleEditTab(tab.id, tab.name); }} style={{ background: 'none', border: 'none', padding: '2px', cursor: 'pointer', color: 'var(--color-primary)', display: 'flex' }} title="Sửa tên thẻ"><Edit size={12} /></button>
                 <button onClick={(e) => { e.stopPropagation(); handleDeleteTab(tab.id); }} style={{ background: 'none', border: 'none', padding: '2px', cursor: 'pointer', color: 'var(--color-danger)', display: 'flex' }} title="Xóa thẻ"><Trash2 size={12} /></button>
@@ -329,7 +330,7 @@ const DanhMucLoi = () => {
             )}
           </div>
         ))}
-        {isAdmin && (
+        {canEdit && (
           <button onClick={handleAddTab} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '0.5rem 1rem', background: 'none', border: '1px dashed var(--color-border)', borderRadius: '6px', color: 'var(--color-text-muted)', cursor: 'pointer', marginLeft: '8px', fontSize: '0.85rem' }}>
             <Plus size={16} /> Thêm thẻ
           </button>
@@ -375,7 +376,7 @@ const DanhMucLoi = () => {
                 key={err.id} 
                 error={err} 
                 viewMode={viewMode} 
-                isAdmin={isAdmin}
+                canEdit={canEdit}
                 onEdit={(e) => { setEditingError(e); setIsFormOpen(true); }}
                 onDelete={handleDeleteError}
               />

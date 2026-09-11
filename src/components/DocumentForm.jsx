@@ -1,6 +1,6 @@
 import React, { useState, useContext, useEffect } from 'react';
 import { format } from 'date-fns';
-import { X, Upload, Check, ChevronDown, Plus } from 'lucide-react';
+import { X, Upload, Check, ChevronDown, Plus, Trash2, Folder, HardDrive, Info, AlertTriangle } from 'lucide-react';
 import { DocumentContext } from '../context/DocumentContext';
 import { useToast } from '../context/UIContext';
 import { EMPLOYEE_LEVELS } from '../data';
@@ -8,8 +8,16 @@ import { v4 as uuidv4 } from 'uuid';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase';
 import { validateFileSize } from '../utils/uploadHelpers';
+import { 
+  isFileSystemAccessSupported, 
+  isDirectoryPickerSupported, 
+  pickFilesWithHandle, 
+  pickDirectoryFilesWithHandle, 
+  deleteLocalFile 
+} from '../utils/fileSystemHelpers';
+import { isProjectSelected } from '../utils/projectMatcher';
 
-const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
+const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = false }) => {
   const { addDocument, editDocument, allDocuments: documents, documentTypes, allProjects: projects, legalSteps = [], checkPermission, enableLazy, uniqueAgencies = [], addPartner } = useContext(DocumentContext);
   const toast = useToast();
 
@@ -37,10 +45,56 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
   const autoCode = `${dateStr}_${seqNumber}`;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [selectedFiles, setSelectedFiles] = useState(initialFiles || []);
   const [isDragging, setIsDragging]     = useState(false);
   const [showAgencyDropdown, setShowAgencyDropdown] = useState(false);
   const [showAddPartnerModal, setShowAddPartnerModal] = useState(false);
+  const [deleteLocalAfterUpload, setDeleteLocalAfterUpload] = useState(false);
+  const [fsSupported, setFsSupported] = useState(false);
+  const [dirSupported, setDirSupported] = useState(false);
+
+  useEffect(() => {
+    setFsSupported(isFileSystemAccessSupported());
+    setDirSupported(isDirectoryPickerSupported());
+  }, []);
+
+  const handlePickFileSystem = async () => {
+    try {
+      const results = await pickFilesWithHandle({ multiple: true });
+      if (results && results.length > 0) {
+        const newFiles = results.map(r => r.file);
+        setSelectedFiles(prev => [...prev, ...newFiles]);
+        setDeleteLocalAfterUpload(true);
+        toast.success(`Đã chọn ${newFiles.length} tệp (Đã liên kết quyền xóa tệp gốc trên máy).`);
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        toast.error('Lỗi khi mở tệp: ' + (err.message || ''));
+      }
+    }
+  };
+
+  const handlePickDirectory = async () => {
+    try {
+      const { files } = await pickDirectoryFilesWithHandle();
+      if (!files || files.length === 0) {
+        toast.info('Thư mục được chọn không có tệp nào.');
+        return;
+      }
+      const newFiles = files.map(f => f.file);
+      setSelectedFiles(prev => [...prev, ...newFiles]);
+      setDeleteLocalAfterUpload(true);
+      toast.success(`Đã chọn ${newFiles.length} tệp từ thư mục.`);
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        toast.error('Lỗi khi mở thư mục: ' + (err.message || ''));
+      }
+    }
+  };
+
+  const removeSelectedFile = (indexToRemove) => {
+    setSelectedFiles(prev => prev.filter((_, idx) => idx !== indexToRemove));
+  };
   const [newPartnerData, setNewPartnerData] = useState({
     name: '',
     shortName: '',
@@ -59,20 +113,44 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
     locked: false
   });
   
-  const [formData, setFormData] = useState(initialData || {
-    documentCode: autoCode,
-    documentNumber: '',
-    documentType: '',
-    issuingAgency: '',
-    effectiveDate: '',
-    summary: '',
-    keywords: '',
-    relatedProjects: [],
-    accessLevels: [],
-    attachmentLink: '',
-    quickViewImage: 'https://images.unsplash.com/photo-1568225367111-44052445b410?q=80&w=600&auto=format&fit=crop',
-    attachments: [],
-    legalStepId: ''
+  const [formData, setFormData] = useState(() => {
+    if (initialData) {
+      return {
+        documentCode: initialData.documentCode || autoCode,
+        documentNumber: initialData.documentNumber || '',
+        documentType: initialData.documentType || '',
+        issuingAgency: initialData.issuingAgency || '',
+        effectiveDate: initialData.effectiveDate || '',
+        summary: initialData.summary || '',
+        keywords: Array.isArray(initialData.keywords) ? initialData.keywords.join(', ') : (initialData.keywords || ''),
+        relatedProjects: Array.isArray(initialData.relatedProjects) ? initialData.relatedProjects : [],
+        accessLevels: Array.isArray(initialData.accessLevels) ? initialData.accessLevels : [],
+        attachmentLink: initialData.attachmentLink || '',
+        quickViewImage: initialData.quickViewImage || 'https://images.unsplash.com/photo-1568225367111-44052445b410?q=80&w=600&auto=format&fit=crop',
+        attachments: Array.isArray(initialData.attachments) ? initialData.attachments : [],
+        legalStepId: initialData.legalStepId || '',
+        ...initialData,
+        // Override properties that might be malformed in initialData
+        keywords: Array.isArray(initialData.keywords) ? initialData.keywords.join(', ') : (initialData.keywords || ''),
+        relatedProjects: Array.isArray(initialData.relatedProjects) ? initialData.relatedProjects : [],
+        accessLevels: Array.isArray(initialData.accessLevels) ? initialData.accessLevels : [],
+      };
+    }
+    return {
+      documentCode: autoCode,
+      documentNumber: '',
+      documentType: '',
+      issuingAgency: '',
+      effectiveDate: '',
+      summary: '',
+      keywords: '',
+      relatedProjects: [],
+      accessLevels: [],
+      attachmentLink: '',
+      quickViewImage: 'https://images.unsplash.com/photo-1568225367111-44052445b410?q=80&w=600&auto=format&fit=crop',
+      attachments: [],
+      legalStepId: ''
+    };
   });
   
   const isEdit = !!(initialData && initialData.id);
@@ -80,22 +158,63 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
   const visibleProjects = projects.filter(p => 
     previewMode || 
     checkPermission(p.id, permissionKey) || 
-    formData.relatedProjects.includes(p.name)
+    isProjectSelected(formData.relatedProjects, p)
   );
+
+  useEffect(() => {
+    if (initialData) {
+      setFormData(prev => ({
+        ...prev,
+        documentNumber: initialData.documentNumber !== undefined ? initialData.documentNumber : prev.documentNumber,
+        documentType: initialData.documentType !== undefined ? initialData.documentType : prev.documentType,
+        issuingAgency: initialData.issuingAgency !== undefined ? initialData.issuingAgency : prev.issuingAgency,
+        effectiveDate: initialData.effectiveDate !== undefined ? initialData.effectiveDate : prev.effectiveDate,
+        summary: initialData.summary !== undefined ? initialData.summary : prev.summary,
+        keywords: Array.isArray(initialData.keywords) ? initialData.keywords.join(', ') : (initialData.keywords !== undefined ? initialData.keywords : prev.keywords),
+        relatedProjects: Array.isArray(initialData.relatedProjects) ? initialData.relatedProjects : (prev.relatedProjects || []),
+        accessLevels: Array.isArray(initialData.accessLevels) ? initialData.accessLevels : (prev.accessLevels || []),
+        legalStepId: initialData.legalStepId !== undefined ? initialData.legalStepId : prev.legalStepId,
+        ...initialData,
+        keywords: Array.isArray(initialData.keywords) ? initialData.keywords.join(', ') : (initialData.keywords !== undefined ? initialData.keywords : prev.keywords),
+        relatedProjects: Array.isArray(initialData.relatedProjects) ? initialData.relatedProjects : (prev.relatedProjects || []),
+        accessLevels: Array.isArray(initialData.accessLevels) ? initialData.accessLevels : (prev.accessLevels || []),
+      }));
+    }
+  }, [initialData]);
+
+  useEffect(() => {
+    if (initialFiles && initialFiles.length > 0) {
+      setSelectedFiles(initialFiles);
+    }
+  }, [initialFiles]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleProjectToggle = (project) => {
+  const handleProjectToggle = (projectObj) => {
     setFormData(prev => {
-      const projects = [...prev.relatedProjects];
-      if (projects.includes(project)) {
-        return { ...prev, relatedProjects: projects.filter(p => p !== project) };
+      const currentList = Array.isArray(prev.relatedProjects) ? [...prev.relatedProjects] : [];
+      const isSelected = isProjectSelected(currentList, projectObj);
+      if (isSelected) {
+        const pName = (projectObj.name || '').trim().toLowerCase();
+        const pCode = (projectObj.code || '').trim().toLowerCase();
+        const pCodeNorm = pCode.replace(/[-\s_]/g, '');
+        const pId = String(projectObj.id || '').trim().toLowerCase();
+
+        const filtered = currentList.filter(item => {
+          const s = String(typeof item === 'object' ? (item.name || item.code || item.id) : item).trim().toLowerCase();
+          const sNorm = s.replace(/[-\s_]/g, '');
+          if (pName && (s === pName || sNorm === pName.replace(/[-\s_]/g, ''))) return false;
+          if (pCode && (s === pCode || sNorm === pCodeNorm)) return false;
+          if (pId && s === pId) return false;
+          if ((sNorm.includes('cns1') || sNorm.includes('cns01')) && (pCodeNorm.includes('cns1') || pCodeNorm.includes('cns01'))) return false;
+          return true;
+        });
+        return { ...prev, relatedProjects: filtered };
       } else {
-        projects.push(project);
-        return { ...prev, relatedProjects: projects };
+        return { ...prev, relatedProjects: [...currentList, projectObj.name] };
       }
     });
   };
@@ -143,15 +262,9 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
         attachmentsData.push({ name: 'Link liên kết', url: formData.attachmentLink });
       }
 
-      // Upload tất cả các file đã chọn lên Firebase Storage
+      // Upload tất cả các file đã chọn lên Firebase Storage (không giới hạn dung lượng)
       if (selectedFiles.length > 0) {
-        const { valid, errors } = validateFileSize(selectedFiles);
-        if (errors.length) {
-          toast.error(`File quá lớn (tối đa 50MB): ${errors.join('; ')}`);
-          if (!valid.length) { setIsSubmitting(false); return; }
-        }
-
-        const withTimeout = (promise, ms) =>
+        const withTimeout = (promise, ms = 300000) =>
           Promise.race([
             promise,
             new Promise((_, reject) =>
@@ -160,9 +273,9 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
           ]);
 
         const uploadedFiles = await Promise.all(
-          valid.map(async (file) => {
+          selectedFiles.map(async (file) => {
             const storageRef = ref(storage, `documents/${Date.now()}_${file.name}`);
-            const snapshot = await withTimeout(uploadBytes(storageRef, file), 20000);
+            const snapshot = await withTimeout(uploadBytes(storageRef, file), 300000);
             const url = await getDownloadURL(snapshot.ref);
             return { name: file.name, url };
           })
@@ -174,20 +287,51 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
       const newDoc = {
         ...formData,
         attachments: attachmentsData, // Lưu dưới dạng mảng
-        uploader: initialData ? initialData.uploader : 'Quản Trị Viên',
-        createdAt: initialData ? initialData.createdAt : new Date().toISOString(),
-        isNew: initialData ? initialData.isNew : true
+        uploader: isEdit ? (initialData.uploader || 'Quản Trị Viên') : 'Quản Trị Viên',
+        createdAt: isEdit ? (initialData.createdAt || new Date().toISOString()) : new Date().toISOString(),
+        isNew: isEdit ? (initialData.isNew ?? false) : true
       };
       
       // Xóa attachmentLink cũ khỏi db để tránh nhầm lẫn
       delete newDoc.attachmentLink;
       
-      if (initialData) {
+      // Loại bỏ các trường undefined để tránh lỗi Firestore
+      Object.keys(newDoc).forEach(key => {
+        if (newDoc[key] === undefined) {
+          delete newDoc[key];
+        }
+      });
+      
+      if (isEdit) {
         await editDocument(initialData.id, newDoc);
       } else {
         newDoc.id = uuidv4();
         await addDocument(newDoc);
       }
+
+      // ── XỬ LÝ XÓA FILE GỐC TRÊN MÁY TÍNH NẾU ĐƯỢC CHỌN ──
+      if (deleteLocalAfterUpload && selectedFiles.length > 0) {
+        let deletedCount = 0;
+        let failedCount = 0;
+        for (const file of selectedFiles) {
+          if (file._fileHandle) {
+            const res = await deleteLocalFile(file._fileHandle, file._dirHandle);
+            if (res.success) {
+              deletedCount++;
+            } else {
+              failedCount++;
+              console.warn(`Không thể xóa file ${file.name}:`, res.error);
+            }
+          }
+        }
+
+        if (deletedCount > 0) {
+          toast.success(`🗑️ Đã tải lên và xóa thành công ${deletedCount} tệp gốc trên máy tính!`);
+        } else if (failedCount > 0) {
+          toast.info('Tài liệu đã lưu lên đám mây. Tệp gốc chưa được xóa do trình duyệt chưa được cấp quyền.');
+        }
+      }
+
       onClose();
     } catch (error) {
       toast.error('Lỗi khi lưu tài liệu: ' + (error.message || 'Vui lòng thử lại!'));
@@ -203,7 +347,7 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
         <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--color-bg-surface-hover)', borderTopLeftRadius: 'var(--radius-lg)', borderTopRightRadius: 'var(--radius-lg)' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Upload size={20} color="var(--color-primary)" />
-            {previewMode ? 'Xem thông tin tài liệu' : (initialData ? 'Sửa thông tin tài liệu' : 'Tải lên tài liệu mới')}
+            {previewMode ? 'Xem thông tin, tài liệu' : (isEdit ? 'Sửa thông tin tài liệu' : 'Tải lên tài liệu mới')}
           </h2>
           <button className="btn-icon" onClick={onClose}><X size={20} /></button>
         </div>
@@ -483,24 +627,27 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
           <div className="form-group">
             <label className="form-label">Dự án liên quan (Có thể chọn nhiều)</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', padding: '0.5rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-bg-surface-hover)' }}>
-              {visibleProjects.map(p => (
-                <button
-                  disabled={previewMode}
-                  key={p.id}
-                  type="button"
-                  onClick={() => handleProjectToggle(p.name)}
-                  className={`badge ${formData.relatedProjects.includes(p.name) ? 'badge-blue' : ''}`}
-                  style={{ 
-                    border: formData.relatedProjects.includes(p.name) ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                    backgroundColor: formData.relatedProjects.includes(p.name) ? 'rgba(130, 168, 209, 0.15)' : 'white',
-                    color: formData.relatedProjects.includes(p.name) ? 'var(--color-primary)' : 'var(--color-text-muted)',
-                    cursor: previewMode ? 'default' : 'pointer', padding: '0.375rem 0.75rem'
-                  }}
-                >
-                  {formData.relatedProjects.includes(p.name) && <Check size={12} style={{ marginRight: '4px' }} />}
-                  {p.name}
-                </button>
-              ))}
+              {visibleProjects.map(p => {
+                const selected = isProjectSelected(formData.relatedProjects, p);
+                return (
+                  <button
+                    disabled={previewMode}
+                    key={p.id}
+                    type="button"
+                    onClick={() => handleProjectToggle(p)}
+                    className={`badge ${selected ? 'badge-blue' : ''}`}
+                    style={{ 
+                      border: selected ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
+                      backgroundColor: selected ? 'rgba(130, 168, 209, 0.15)' : 'white',
+                      color: selected ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                      cursor: previewMode ? 'default' : 'pointer', padding: '0.375rem 0.75rem'
+                    }}
+                  >
+                    {selected && <Check size={12} style={{ marginRight: '4px' }} />}
+                    {p.name}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -532,7 +679,63 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
 
           {!previewMode && (
             <div className="form-group">
-              <label className="form-label">Tài liệu đính kèm mới (Tuỳ chọn nếu đã có) <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <label className="form-label" style={{ margin: 0 }}>
+                  Tài liệu đính kèm {(!formData.attachments || formData.attachments.length === 0) && <span style={{ color: 'var(--color-danger)' }}>*</span>}
+                </label>
+                
+                {/* Các nút chọn qua File System Access API */}
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  {fsSupported && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handlePickFileSystem}
+                      style={{
+                        padding: '0.3rem 0.65rem',
+                        fontSize: '0.78rem',
+                        backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                        color: '#3b82f6',
+                        border: '1px solid rgba(59, 130, 246, 0.3)',
+                        borderRadius: 'var(--radius-md)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        fontWeight: '600',
+                        cursor: 'pointer'
+                      }}
+                      title="Chọn tệp từ máy tính kèm quyền quản lý xóa tệp gốc sau khi tải"
+                    >
+                      <HardDrive size={14} />
+                      <span>Chọn từ ổ đĩa (Hỗ trợ xóa gốc)</span>
+                    </button>
+                  )}
+                  {dirSupported && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handlePickDirectory}
+                      style={{
+                        padding: '0.3rem 0.65rem',
+                        fontSize: '0.78rem',
+                        backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                        color: '#10b981',
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                        borderRadius: 'var(--radius-md)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.35rem',
+                        fontWeight: '600',
+                        cursor: 'pointer'
+                      }}
+                      title="Chọn tất cả tệp trong một thư mục"
+                    >
+                      <Folder size={14} />
+                      <span>Chọn cả thư mục</span>
+                    </button>
+                  )}
+                </div>
+              </div>
 
               {/* ── Drag & Drop Zone ── */}
               <div
@@ -541,78 +744,114 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
                 onDrop={(e) => {
                   e.preventDefault();
                   setIsDragging(false);
-                  const MAX = 20 * 1024 * 1024;
                   const all = Array.from(e.dataTransfer.files);
-                  const oversized = all.filter(f => f.size > MAX);
-                  if (oversized.length > 0) {
-                    toast.warning(`${oversized.length} tệp vượt giới hạn 20MB: ${oversized.map(f => f.name).join(', ')}`);
-                  }
-                  setSelectedFiles(all.filter(f => f.size <= MAX));
+                  setSelectedFiles(prev => [...prev, ...all]);
                 }}
-                onClick={() => document.getElementById('doc-file-input').click()}
+                onClick={() => {
+                  if (fsSupported) {
+                    handlePickFileSystem();
+                  } else {
+                    document.getElementById('doc-file-input')?.click();
+                  }
+                }}
                 style={{
                   border: `2px dashed ${isDragging ? '#818cf8' : 'var(--color-border)'}`,
                   borderRadius: 'var(--radius-md)',
-                  padding: '1.5rem',
+                  padding: '1.25rem',
                   textAlign: 'center',
                   cursor: 'pointer',
                   background: isDragging ? 'rgba(129,140,248,0.08)' : 'var(--color-bg-surface-hover)',
                   transition: 'all 0.2s',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem',
                 }}
               >
-                <Upload size={28} style={{ color: isDragging ? '#818cf8' : 'var(--color-text-muted)', transition: 'color 0.2s' }} />
+                <Upload size={26} style={{ color: isDragging ? '#818cf8' : 'var(--color-text-muted)', transition: 'color 0.2s' }} />
                 {selectedFiles.length > 0 ? (
                   <div>
-                    <p style={{ fontWeight: '600', color: 'var(--color-text-main)', margin: 0 }}>
+                    <p style={{ fontWeight: '600', color: 'var(--color-text-main)', margin: 0, fontSize: '0.9rem' }}>
                       Đã chọn {selectedFiles.length} tệp
                     </p>
                     <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', margin: '0.2rem 0 0' }}>
-                      {selectedFiles.map(f => f.name).join(', ')}
+                      Nhấn để chọn thêm hoặc kéo thả tệp khác vào đây
                     </p>
                   </div>
                 ) : (
                   <div>
-                    <p style={{ fontWeight: '600', color: 'var(--color-text-main)', margin: 0 }}>
-                      Kéo & thả tệp vào đây
+                    <p style={{ fontWeight: '600', color: 'var(--color-text-main)', margin: 0, fontSize: '0.9rem' }}>
+                      Kéo & thả tệp vào đây hoặc nhấn để chọn
                     </p>
                     <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', margin: '0.2rem 0 0' }}>
-                      hoặc nhấn để chọn · PDF, Word, Excel, Ảnh · Tối đa 20MB/tệp
+                      Mọi định dạng (PDF, Word, CAD, Excel, Zip, Ảnh...) · Không giới hạn dung lượng · Hỗ trợ xóa file gốc
                     </p>
                   </div>
                 )}
               </div>
 
-              {/* Input ẩn */}
+              {/* Checkbox tùy chọn xóa file gốc */}
+              <div style={{
+                marginTop: '0.75rem',
+                padding: '0.75rem 1rem',
+                backgroundColor: deleteLocalAfterUpload ? 'rgba(239, 68, 68, 0.08)' : 'var(--color-bg-surface)',
+                border: `1px solid ${deleteLocalAfterUpload ? '#ef4444' : 'var(--color-border)'}`,
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.35rem',
+                transition: 'all 0.2s ease'
+              }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: '600', color: deleteLocalAfterUpload ? '#ef4444' : 'var(--color-text-main)', fontSize: '0.85rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={deleteLocalAfterUpload}
+                    onChange={(e) => {
+                      setDeleteLocalAfterUpload(e.target.checked);
+                      if (e.target.checked && selectedFiles.length > 0 && !selectedFiles.some(f => f._fileHandle)) {
+                        toast.info('💡 Các tệp hiện tại được chọn qua kéo-thả thông thường. Vui lòng bấm nút "Chọn từ ổ đĩa" để cấp quyền xóa file gốc trên máy.');
+                      }
+                    }}
+                    style={{ width: '16px', height: '16px', accentColor: '#ef4444', cursor: 'pointer' }}
+                  />
+                  <Trash2 size={16} />
+                  <span>Tự động xóa file gốc trên máy tính sau khi tải lên thành công</span>
+                </label>
+                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', paddingLeft: '1.6rem' }}>
+                  {deleteLocalAfterUpload ? (
+                    <span style={{ color: '#ef4444' }}>
+                      ⚠️ Sau khi lưu lên Cloud, trình duyệt Chrome/Edge sẽ hiển thị xác nhận quyền xóa tệp từ máy của bạn.
+                    </span>
+                  ) : (
+                    <span>
+                      Sử dụng File System Access API trên trình duyệt để tự động dọn dẹp file gốc trên máy sau khi tải lên lưu trữ.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Input ẩn phục vụ fallback */}
               <input
                 id="doc-file-input"
-                required={(!formData.attachments || formData.attachments.length === 0) && selectedFiles.length === 0}
                 type="file"
                 multiple
                 style={{ display: 'none' }}
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
                 onChange={(e) => {
-                  const MAX = 20 * 1024 * 1024;
                   const all = Array.from(e.target.files);
-                  const oversized = all.filter(f => f.size > MAX);
-                  if (oversized.length > 0) {
-                    toast.warning(`${oversized.length} tệp vượt giới hạn 20MB: ${oversized.map(f => f.name).join(', ')}`);
-                  }
-                  setSelectedFiles(all.filter(f => f.size <= MAX));
+                  setSelectedFiles(prev => [...prev, ...all]);
                 }}
               />
+
+              {/* Danh sách tệp cũ đã lưu */}
               {formData.attachments && formData.attachments.length > 0 && (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-                  <div style={{ marginBottom: '0.25rem' }}>Tệp cũ đã lưu:</div>
+                <div style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                  <div style={{ marginBottom: '0.35rem', fontWeight: '600' }}>Tệp đã lưu trước đó:</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                     {formData.attachments.map((f, idx) => (
-                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.25rem 0.5rem', backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
-                        <span style={{ wordBreak: 'break-all' }}>{f.name}</span>
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.3rem 0.6rem', backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', fontSize: '0.8rem' }}>
+                        <span style={{ wordBreak: 'break-all' }}>📄 {f.name}</span>
                         <button 
                           type="button" 
                           onClick={() => removeOldAttachment(idx)}
                           style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0.125rem' }}
-                          title="Xóa tệp này"
+                          title="Xóa tệp này khỏi tài liệu"
                         >
                           <X size={14} />
                         </button>
@@ -621,14 +860,54 @@ const DocumentForm = ({ onClose, initialData, previewMode = false }) => {
                   </div>
                 </div>
               )}
+
+              {/* Danh sách tệp mới đã chọn */}
               {selectedFiles.length > 0 && (
-                <div style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-                  Đã chọn {selectedFiles.length} tệp mới:
-                  <ul style={{ paddingLeft: '1.5rem', marginTop: '0.25rem' }}>
+                <div style={{ marginTop: '0.75rem', fontSize: '0.85rem' }}>
+                  <div style={{ marginBottom: '0.35rem', fontWeight: '600', color: 'var(--color-text-main)' }}>
+                    Danh sách tệp mới chuẩn bị tải lên ({selectedFiles.length}):
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                     {selectedFiles.map((file, i) => (
-                      <li key={i}>{file.name}</li>
+                      <div 
+                        key={i} 
+                        style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'space-between', 
+                          padding: '0.4rem 0.75rem', 
+                          backgroundColor: 'var(--color-bg-surface-hover)', 
+                          border: '1px solid var(--color-border)', 
+                          borderRadius: 'var(--radius-md)',
+                          fontSize: '0.8rem'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontWeight: '500', color: 'var(--color-text-main)' }}>📄 {file.name}</span>
+                          <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
+                            ({file.size ? (file.size / (1024 * 1024)).toFixed(2) + ' MB' : '0 MB'})
+                          </span>
+                          {file._fileHandle ? (
+                            <span style={{ fontSize: '0.7rem', backgroundColor: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '1px 6px', borderRadius: '4px', fontWeight: '600' }}>
+                              🗑️ Hỗ trợ xóa gốc
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '0.7rem', backgroundColor: 'rgba(148,163,184,0.15)', color: 'var(--color-text-muted)', padding: '1px 6px', borderRadius: '4px' }}>
+                              Tải thường
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeSelectedFile(i)}
+                          style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center' }}
+                          title="Bỏ chọn tệp này"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 </div>
               )}
             </div>

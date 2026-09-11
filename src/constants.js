@@ -35,6 +35,7 @@ export const COLLECTIONS = {
   SCHEDULE_STEPS: 'scheduleSteps',
   ACCEPTANCE_STEPS: 'acceptanceSteps',
   INVITATIONS: 'invitations',
+  ATLD_ISSUES: 'atldIssues',
 };
 
 // ── Danh sách bước mặc định (dùng chung PhapLy & TienDo) ─────────────────

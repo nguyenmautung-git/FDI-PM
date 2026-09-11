@@ -156,7 +156,12 @@ export const mockProjects = [
     investor: 'Công ty TNHH Hạ tầng công nghệ số FPT',
     parentId: '',
     image: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?q=80&w=800&auto=format&fit=crop',
-    details: PROJECT_DETAILS_TEMPLATE.map(d => ({ ...d, value: d.key === 'so_tang_cao' ? '15' : '' }))
+    details: PROJECT_DETAILS_TEMPLATE.map(d => ({ ...d, value: d.key === 'so_tang_cao' ? '15' : '' })),
+    projectMembers: [
+      { memberId: 1, role: 'Giám đốc DA' },
+      { memberId: 2, role: 'Chuyên viên' },
+      { memberId: 4, role: 'Thư ký DA' }
+    ]
   }
 ];
 

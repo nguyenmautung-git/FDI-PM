@@ -162,7 +162,13 @@ const PERMISSION_GROUPS = [
   },
 ];
 
+const ALL_ADMIN_PERMS = PERMISSION_GROUPS.reduce((acc, g) => {
+  g.perms.forEach(p => { acc[p.key] = true; });
+  return acc;
+}, {});
+
 const DEFAULT_MATRIX = {
+  'Admin': ALL_ADMIN_PERMS,
   'Giám đốc DA': {
     view_docs: true,  add_docs: true,  edit_docs: true,
     view_steps: true, add_steps: true, edit_steps: true, reorder: true, upload_att: true,
@@ -191,7 +197,10 @@ const DEFAULT_MATRIX = {
 
 const getRoleColors = (roleName) => {
   const name = (roleName || '').toLowerCase();
-  if (name.includes('giám đốc') || name.includes('gd') || name.includes('pm') || name.includes('chủ trì') || name.includes('admin')) {
+  if (name === 'admin' || name.includes('quản trị')) {
+    return { bg: 'rgba(239, 68, 68, 0.15)', border: 'rgba(239, 68, 68, 0.45)', text: '#f87171' };
+  }
+  if (name.includes('giám đốc') || name.includes('gd') || name.includes('pm') || name.includes('chủ trì')) {
     return { bg: 'rgba(99, 102, 241, 0.15)', border: 'rgba(99, 102, 241, 0.4)', text: '#818cf8' };
   }
   if (name.includes('thư ký') || name.includes('trợ lý')) {
@@ -208,15 +217,26 @@ const ProjectRoleMatrix = () => {
   const [collapsedGroups, setCollapsedGroups] = useState({});
 
   const rolesList = useMemo(() => {
+    let list = [];
     if (globalLists?.projectRoles && globalLists.projectRoles.length > 0) {
-      return globalLists.projectRoles.map(item => item.name);
+      list = globalLists.projectRoles.map(item => item.name);
+    } else {
+      list = Object.keys(projectRoleMatrix || {});
     }
-    return Object.keys(projectRoleMatrix || {});
+    const others = list.filter(r => r !== 'Admin');
+    return ['Admin', ...others];
   }, [globalLists, projectRoleMatrix]);
 
   useEffect(() => {
     if (projectRoleMatrix) {
-      setMatrix(projectRoleMatrix);
+      setMatrix({
+        ...projectRoleMatrix,
+        'Admin': { ...ALL_ADMIN_PERMS }
+      });
+    } else {
+      setMatrix({
+        'Admin': { ...ALL_ADMIN_PERMS }
+      });
     }
   }, [projectRoleMatrix]);
 
@@ -228,6 +248,7 @@ const ProjectRoleMatrix = () => {
   };
 
   const toggle = (role, permKey) => {
+    if (role === 'Admin') return; // Vai trò Admin luôn có toàn quyền (mặc định, không sửa được)
     setMatrix(prev => {
       const rolePerms = prev[role] || {};
       return {
@@ -240,7 +261,10 @@ const ProjectRoleMatrix = () => {
 
   const handleSave = async () => {
     try {
-      await saveProjectRoleMatrix(matrix);
+      await saveProjectRoleMatrix({
+        ...matrix,
+        'Admin': { ...ALL_ADMIN_PERMS }
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (error) {
@@ -249,16 +273,14 @@ const ProjectRoleMatrix = () => {
   };
 
   const countGranted = (role) => {
+    if (role === 'Admin') return totalPerms;
     if (!matrix[role]) return 0;
     return Object.values(matrix[role]).filter(Boolean).length;
   };
 
   const totalPerms = useMemo(() => {
-    if (!matrix || Object.keys(matrix).length === 0) return 0;
-    const firstRole = Object.keys(matrix)[0];
-    if (!firstRole || !matrix[firstRole]) return 0;
-    return Object.values(matrix[firstRole]).length;
-  }, [matrix]);
+    return PERMISSION_GROUPS.reduce((acc, g) => acc + g.perms.length, 0);
+  }, []);
 
   if (!rolesList || rolesList.length === 0) {
     return (
@@ -298,13 +320,14 @@ const ProjectRoleMatrix = () => {
           }}>
             <Info size={15} style={{ color: '#60a5fa', flexShrink: 0, marginTop: '2px' }} />
             <span>
-              Ma trận này định nghĩa quyền của từng <strong style={{ color: 'var(--color-text-main)' }}>vai trò trong dự án</strong>. Danh sách vai trò được cấu hình tại tab Danh mục hệ thống và được cập nhật tự động tại đây.
+              Ma trận này định nghĩa quyền của từng <strong style={{ color: 'var(--color-text-main)' }}>vai trò trong dự án</strong>. Vai trò <strong style={{ color: '#f87171' }}>Admin</strong> luôn mặc định có toàn bộ quyền trong hệ thống và không thể sửa đổi.
             </span>
           </div>
 
           {/* Role summary badges */}
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
             {rolesList.map(role => {
+              const isAdmin = role === 'Admin';
               const c = getRoleColors(role);
               const granted = countGranted(role);
               return (
@@ -313,8 +336,13 @@ const ProjectRoleMatrix = () => {
                   padding: '0.5rem 1rem', borderRadius: '10px',
                   background: c.bg, border: `1px solid ${c.border}`,
                 }}>
-                  <Users2 size={14} color={c.text} />
+                  {isAdmin ? <ShieldCheck size={15} color={c.text} /> : <Users2 size={14} color={c.text} />}
                   <span style={{ fontWeight: '700', fontSize: '0.85rem', color: c.text }}>{role}</span>
+                  {isAdmin && (
+                    <span style={{ fontSize: '0.7rem', padding: '1px 6px', borderRadius: '12px', background: 'rgba(239, 68, 68, 0.25)', color: '#fca5a5', fontWeight: '600' }}>
+                      Mặc định · Khóa
+                    </span>
+                  )}
                   <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
                     {granted}/{totalPerms} quyền
                   </span>
@@ -328,14 +356,18 @@ const ProjectRoleMatrix = () => {
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '580px' }}>
               <thead>
                 <tr style={{ background: 'var(--color-bg-surface-hover)' }}>
-                  <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.78rem', fontWeight: '700', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', width: '44%' }}>
+                  <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.78rem', fontWeight: '700', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', width: '38%' }}>
                     Tính năng
                   </th>
                   {rolesList.map(role => {
                     const c = getRoleColors(role);
+                    const isAdmin = role === 'Admin';
                     return (
-                      <th key={role} style={{ padding: '0.75rem 0.5rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: '700', color: c.text, width: `${56 / rolesList.length}%` }}>
-                        {role}
+                      <th key={role} style={{ padding: '0.75rem 0.5rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: '700', color: c.text, width: `${62 / rolesList.length}%` }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                          <span>{role}</span>
+                          {isAdmin && <span style={{ fontSize: '0.65rem', color: '#fca5a5', fontWeight: '600' }}>(Toàn quyền)</span>}
+                        </div>
                       </th>
                     );
                   })}
@@ -390,28 +422,34 @@ const ProjectRoleMatrix = () => {
                             </div>
                           </td>
                           {rolesList.map(role => {
-                            const granted = matrix[role] ? matrix[role][perm.key] : false;
+                            const isAdmin = role === 'Admin';
+                            const granted = isAdmin ? true : (matrix[role] ? matrix[role][perm.key] : false);
                             const c = getRoleColors(role);
-                            // Admin-only perms are always locked off for project roles
-                            const locked = isAdminOnly;
+                            // Admin is permanently locked with all permissions ON
+                            const locked = isAdmin || (!isAdmin && isAdminOnly);
                             return (
                               <td key={role} style={{ textAlign: 'center', padding: '0.6rem 0.5rem' }}>
                                 <button
+                                  type="button"
                                   onClick={() => !locked && toggle(role, perm.key)}
-                                  title={locked ? 'Chỉ dành cho Admin hệ thống' : (granted ? 'Đang bật — nhấn để tắt' : 'Đang tắt — nhấn để bật')}
+                                  title={
+                                    isAdmin
+                                      ? 'Vai trò Admin luôn mặc định có toàn bộ quyền trong web app (không thể chỉnh sửa)'
+                                      : (locked ? 'Chỉ dành cho Admin hệ thống' : (granted ? 'Đang bật — nhấn để tắt' : 'Đang tắt — nhấn để bật'))
+                                  }
                                   style={{
                                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                                     width: '28px', height: '28px', borderRadius: '8px', border: 'none',
                                     cursor: locked ? 'not-allowed' : 'pointer',
-                                    background: locked
+                                    background: locked && !isAdmin
                                       ? 'rgba(148,163,184,0.08)'
                                       : granted ? c.bg : 'rgba(148,163,184,0.08)',
-                                    outline: granted && !locked ? `1.5px solid ${c.border}` : '1.5px solid transparent',
+                                    outline: granted && (!locked || isAdmin) ? `1.5px solid ${c.border}` : '1.5px solid transparent',
                                     transition: 'all 0.18s',
-                                    opacity: locked ? 0.45 : 1,
+                                    opacity: locked && !isAdmin ? 0.45 : 1,
                                   }}
                                 >
-                                  {locked
+                                  {locked && !isAdmin
                                     ? <Lock size={13} color="#64748b" />
                                     : granted
                                       ? <Check size={14} color={c.text} strokeWidth={2.5} />

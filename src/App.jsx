@@ -1,22 +1,20 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from './firebase';
 import { DocumentProvider } from './context/DocumentContext';
 import { UIProvider } from './context/UIContext';
 import LoginPage from './components/LoginPage';
 import InvitePage from './components/InvitePage';
-import Sidebar from './components/Sidebar';
-import Header from './components/Header';
-import DocumentForm from './components/DocumentForm';
-import AIAssistant from './components/AIAssistant';
 
-// ── Core pages (tải ngay) ──────────────────────────────────────────────────
-import Dashboard from './components/Dashboard';
-import Overview from './components/Overview';
-import Projects from './components/Projects';
-import ComingSoon from './components/ComingSoon';
-
-// ── Lazy pages ─────────────────────────────────────────────────────────────
+// ── Lazy load toàn bộ component Desktop để bản Mobile không phải tải thừa thư viện biểu đồ & form nặng ──
+const Sidebar            = lazy(() => import('./components/Sidebar'));
+const Header             = lazy(() => import('./components/Header'));
+const DocumentForm       = lazy(() => import('./components/DocumentForm'));
+const AIAssistant        = lazy(() => import('./components/AIAssistant'));
+const Dashboard          = lazy(() => import('./components/Dashboard'));
+const Overview           = lazy(() => import('./components/Overview'));
+const Projects           = lazy(() => import('./components/Projects'));
+const ComingSoon         = lazy(() => import('./components/ComingSoon'));
 const Members            = lazy(() => import('./components/Members'));
 const Settings           = lazy(() => import('./components/Settings'));
 const Partners           = lazy(() => import('./components/Partners'));
@@ -29,6 +27,7 @@ const KhoiLuong          = lazy(() => import('./components/KhoiLuong'));
 const NghiemThu          = lazy(() => import('./components/NghiemThu'));
 const DanhMucLoi         = lazy(() => import('./components/DanhMucLoi'));
 const Payment            = lazy(() => import('./components/Payment'));
+const Atld               = lazy(() => import('./components/Atld'));
 const MobileDocumentApp  = lazy(() => import('./components/MobileDocumentApp'));
 
 // ── Màn hình chờ ─────────────────────────────────────────────────────────
@@ -56,20 +55,98 @@ const LoadingScreen = () => (
 
 // Component nội dung chính sau khi đã bọc DocumentProvider liên tục
 const AppMain = () => {
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [formModalState, setFormModalState] = useState({ isOpen: false, initialData: null, initialFiles: [] });
   const [searchFocus, setSearchFocus] = useState(null);
+
+  const handleOpenDocForm = (initialData = null, initialFiles = []) => {
+    setFormModalState({ isOpen: true, initialData, initialFiles });
+  };
 
   // Phát hiện điện thoại thật (iPhone / Android)
   const isMobileDevice = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   const [currentView, setCurrentView] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.hash) {
+      const hashView = window.location.hash.replace(/^#/, '');
+      if (hashView) return hashView;
+    }
     return isMobileDevice ? 'mobileDocs' : 'overview';
   });
 
+  const navigateView = useCallback((newView, replace = false) => {
+    if (!newView) return;
+    setCurrentView(prev => {
+      if (prev === newView) return prev;
+      if (!replace) {
+        window.history.pushState({ view: newView }, '', '#' + newView);
+      }
+      return newView;
+    });
+  }, []);
+
+  const handleGoBack = useCallback(() => {
+    if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      navigateView(isMobileDevice ? 'mobileDocs' : 'overview');
+    }
+  }, [navigateView, isMobileDevice]);
+
+  const handleGoHome = useCallback(() => {
+    navigateView(isMobileDevice ? 'mobileDocs' : 'overview');
+  }, [navigateView, isMobileDevice]);
+
+  // Đồng bộ popstate với phím Back / Forward trên trình duyệt
+  useEffect(() => {
+    const currentHash = window.location.hash.replace(/^#/, '');
+    const initialView = currentHash || (isMobileDevice ? 'mobileDocs' : 'overview');
+    window.history.replaceState({ view: initialView }, '', '#' + initialView);
+
+    const handlePopState = (e) => {
+      const targetView = e.state?.view || window.location.hash.replace(/^#/, '') || (isMobileDevice ? 'mobileDocs' : 'overview');
+      if (targetView) {
+        setCurrentView(targetView);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isMobileDevice]);
+
+  // Lắng nghe phím Home và Back / Backspace trên bàn phím
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      const target = e.target;
+      const isInput = target && (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable
+      );
+
+      // Phím Home: Trở về trang chủ khi không gõ text
+      if (e.key === 'Home' && !isInput && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        handleGoHome();
+        return;
+      }
+
+      // Phím Backspace hoặc Alt + ArrowLeft: Quay lại trang trước khi không gõ text
+      if ((e.key === 'Backspace' && !isInput) || (e.altKey && e.key === 'ArrowLeft')) {
+        e.preventDefault();
+        handleGoBack();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleGoHome, handleGoBack]);
+
   const renderContent = () => {
     switch (currentView) {
-      case 'overview':           return <Overview />;
-      case 'dashboard':          return <Dashboard onOpenForm={() => setIsFormOpen(true)} />;
+      case 'overview':           return <Overview onNavigate={navigateView} />;
+      case 'dashboard':          return <Dashboard onOpenForm={handleOpenDocForm} />;
       case 'projects':           return <Projects focusProjectId={searchFocus?.type === 'project' ? searchFocus.data?.id : null} onFocusCleared={() => setSearchFocus(null)} />;
       case 'members':            return <Members />;
       case 'partners':           return <Partners />;
@@ -79,17 +156,17 @@ const AppMain = () => {
       case 'phapLy':             return <PhapLy />;
       case 'tienDo':             return <TienDo />;
       case 'khoiLuong':          return <KhoiLuong />;
-      case 'atld':               return <ComingSoon title="ATLĐ & VSMT" icon="🪦" description="Quản lý an toàn lao động, vệ sinh môi trường thi công, biên bản kiểm tra định kỳ." />;
+      case 'atld':               return <Atld />;
       case 'nghiemThu':          return <NghiemThu />;
       case 'payment':            return <Payment />;
       case 'danhMucLoi':         return <DanhMucLoi />;
-      case 'mobileDocs':         return <MobileDocumentApp onCloseMobileView={() => setCurrentView('overview')} />;
+      case 'mobileDocs':         return <MobileDocumentApp onCloseMobileView={() => navigateView('overview')} />;
       case 'settings':           return <Settings />;
       default: return (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--color-text-muted)' }}>
           <h2 style={{ fontSize: '1.5rem', fontWeight: '600', marginBottom: '1rem', color: 'var(--color-text-main)' }}>Chức năng đang phát triển</h2>
           <p>Khu vực này hiện chưa được xây dựng nội dung.</p>
-          <button className="btn btn-primary" style={{ marginTop: '1.5rem' }} onClick={() => setCurrentView('overview')}>
+          <button className="btn btn-primary" style={{ marginTop: '1.5rem' }} onClick={() => navigateView('overview')}>
             Quay lại Tổng quan
           </button>
         </div>
@@ -108,26 +185,41 @@ const AppMain = () => {
 
   // Giao diện Desktop đầy đủ với Sidebar & Header
   return (
-    <div className="app-container">
-      <Sidebar currentView={currentView} setCurrentView={setCurrentView} />
-      <main className="main-content">
-        <Header currentView={currentView} onOpenForm={() => setIsFormOpen(true)} onNavigate={setCurrentView} onSearchSelect={setSearchFocus} />
-        <div className="content-area">
-          <Suspense fallback={<LoadingScreen />}>
-            {renderContent()}
-          </Suspense>
-        </div>
-      </main>
-      {isFormOpen && <DocumentForm onClose={() => setIsFormOpen(false)} />}
-      {searchFocus?.type === 'document' && (
-        <DocumentForm
-          initialData={searchFocus.data}
-          previewMode={true}
-          onClose={() => setSearchFocus(null)}
-        />
-      )}
-      <AIAssistant />
-    </div>
+    <Suspense fallback={<LoadingScreen />}>
+      <div className="app-container">
+        <Sidebar currentView={currentView} setCurrentView={navigateView} />
+        <main className="main-content">
+          <Header
+            currentView={currentView}
+            onOpenForm={() => handleOpenDocForm()}
+            onNavigate={navigateView}
+            onGoBack={handleGoBack}
+            onGoHome={handleGoHome}
+            onSearchSelect={setSearchFocus}
+          />
+          <div className="content-area">
+            <Suspense fallback={<LoadingScreen />}>
+              {renderContent()}
+            </Suspense>
+          </div>
+        </main>
+        {formModalState.isOpen && (
+          <DocumentForm
+            initialData={formModalState.initialData}
+            initialFiles={formModalState.initialFiles}
+            onClose={() => setFormModalState({ isOpen: false, initialData: null, initialFiles: [] })}
+          />
+        )}
+        {searchFocus?.type === 'document' && (
+          <DocumentForm
+            initialData={searchFocus.data}
+            previewMode={true}
+            onClose={() => setSearchFocus(null)}
+          />
+        )}
+        <AIAssistant />
+      </div>
+    </Suspense>
   );
 };
 

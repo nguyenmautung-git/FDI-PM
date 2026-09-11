@@ -15,12 +15,41 @@ const EMAILJS_GUIDE = `Hướng dẫn cài EmailJS (miễn phí, 200 email/thán
    VITE_EMAILJS_TEMPLATE_ID=your_template_id
    VITE_EMAILJS_PUBLIC_KEY=your_public_key`;
 
+const getRoleBadgeStyle = (roleName) => {
+  const name = (roleName || '').toLowerCase();
+  if (name === 'admin' || name.includes('quản trị')) {
+    return { bg: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', border: 'rgba(239, 68, 68, 0.3)' };
+  }
+  if (name.includes('giám đốc') || name.includes('gd') || name.includes('pm') || name.includes('chủ trì')) {
+    return { bg: 'rgba(99, 102, 241, 0.15)', color: '#818cf8', border: 'rgba(99, 102, 241, 0.3)' };
+  }
+  if (name.includes('thư ký') || name.includes('trợ lý')) {
+    return { bg: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', border: 'rgba(245, 158, 11, 0.3)' };
+  }
+  return { bg: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: 'rgba(16, 185, 129, 0.3)' };
+};
+
 const InviteUserModal = ({ onClose }) => {
-  const { invitations, sendInvitation, revokeInvitation, resendInvitation } = useContext(DocumentContext);
+  const { invitations, sendInvitation, revokeInvitation, resendInvitation, globalLists, projectRoleMatrix } = useContext(DocumentContext);
   const toast = useToast();
 
+  const availableRoles = React.useMemo(() => {
+    let list = [];
+    if (globalLists?.projectRoles && globalLists.projectRoles.length > 0) {
+      list = globalLists.projectRoles.map(item => item.name);
+    } else if (projectRoleMatrix) {
+      list = Object.keys(projectRoleMatrix);
+    }
+    const others = list.filter(r => r !== 'Admin' && r !== 'User');
+    return ['Admin', ...others];
+  }, [globalLists?.projectRoles, projectRoleMatrix]);
+
+  const defaultRole = availableRoles.includes('Thành viên dự án')
+    ? 'Thành viên dự án'
+    : (availableRoles[1] || availableRoles[0] || 'Admin');
+
   const [activeTab, setActiveTab] = useState('send');
-  const [form, setForm] = useState({ email: '', name: '', role: 'User', level: 1 });
+  const [form, setForm] = useState({ email: '', name: '', role: defaultRole, level: 1 });
   const [state, setState] = useState('idle'); // idle | loading | success | error
   const [errorMsg, setErrorMsg] = useState('');
   const [inviteLink, setInviteLink] = useState('');
@@ -85,7 +114,7 @@ const InviteUserModal = ({ onClose }) => {
   };
 
   const resetForm = () => {
-    setForm({ email: '', name: '', role: 'User', level: 1 });
+    setForm({ email: '', name: '', role: defaultRole, level: 1 });
     setState('idle');
     setInviteLink('');
     setErrorMsg('');
@@ -178,8 +207,9 @@ const InviteUserModal = ({ onClose }) => {
                       <div>
                         <label style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--color-text-muted)', display: 'block', marginBottom: '0.4rem' }}>Vai trò</label>
                         <select className="input-field" value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}>
-                          <option value="User">User</option>
-                          <option value="Admin">Admin</option>
+                          {availableRoles.map(r => (
+                            <option key={r} value={r}>{r}</option>
+                          ))}
                         </select>
                       </div>
                       <div>
@@ -292,9 +322,14 @@ const InviteUserModal = ({ onClose }) => {
                               <span style={{ padding: '2px 8px', background: statusInfo.bg, color: statusInfo.color, borderRadius: '999px', fontSize: '0.7rem', fontWeight: '600' }}>
                                 {statusInfo.label}
                               </span>
-                              <span style={{ padding: '2px 8px', background: 'rgba(59,130,246,0.1)', color: '#60a5fa', borderRadius: '999px', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '2px' }}>
-                                <Shield size={9} />{inv.role}
-                              </span>
+                              {(() => {
+                                const bStyle = getRoleBadgeStyle(inv.role);
+                                return (
+                                  <span style={{ padding: '2px 8px', background: bStyle.bg, color: bStyle.color, border: `1px solid ${bStyle.border}`, borderRadius: '999px', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '3px', fontWeight: '600' }}>
+                                    <Shield size={9} />{inv.role}
+                                  </span>
+                                );
+                              })()}
                               {isActive && (
                                 <span style={{ padding: '2px 8px', background: 'rgba(107,114,128,0.15)', color: 'var(--color-text-muted)', borderRadius: '999px', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '2px' }}>
                                   <Clock size={9} />{timeLeft}

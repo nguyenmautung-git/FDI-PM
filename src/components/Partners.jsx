@@ -334,16 +334,13 @@ const Partners = () => {
   const handleFileUpload = async (e, isEdit = false) => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
-    const { valid, errors } = validateFileSize(files);
-    if (errors.length) {
-      toast.error(`File quá lớn (tối đa 50MB): ${errors.join('; ')}`);
-      if (!valid.length) return;
-    }
+    const { valid } = validateFileSize(files);
+    if (!valid.length) return;
     try {
       const newAttachments = await Promise.all(
         valid.map(async (file) => {
           const storageRef = ref(storage, `partners/${Date.now()}_${file.name}`);
-          const snapshot = await withTimeout(uploadBytes(storageRef, file), 20000);
+          const snapshot = await withTimeout(uploadBytes(storageRef, file), 300000);
           const url = await getDownloadURL(snapshot.ref);
           return { name: file.name, url };
         })

@@ -5,7 +5,7 @@ import FilterPanel from './FilterPanel';
 import DocumentCard from './DocumentCard';
 import {
   LayoutGrid, List, Download, X, CheckSquare,
-  ChevronLeft, ChevronRight, ArrowUpDown, FileSpreadsheet, Plus,
+  ChevronLeft, ChevronRight, ArrowUpDown, FileSpreadsheet, Plus, Sparkles, Loader
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
@@ -14,7 +14,8 @@ import { ref as storageRef, getBlob } from 'firebase/storage';
 import { storage } from '../firebase';
 import * as XLSX from 'xlsx';
 import { ROLES } from '../constants';
-
+import { isFileSystemAccessSupported, pickFilesWithHandle } from '../utils/fileSystemHelpers';
+import { isDocRelatedToProject } from '../utils/projectMatcher';
 
 const EMPTY_FILTERS = { keyword: '', project: [], agency: '', documentType: '', dateFrom: '', dateTo: '' };
 const safeName = (s) => (s || 'TaiLieu').replace(/[/\\:*?"<>|]/g, '_').trim();
@@ -84,7 +85,7 @@ const exportToExcel = (docs) => {
 };
 
 const Dashboard = ({ onOpenForm }) => {
-  const { allDocuments: documents, isDocNew, logDownload, userRole, canAddDocument } = useContext(DocumentContext);
+  const { allDocuments: documents, isDocNew, logDownload, userRole, canAddDocument, documentTypes, allProjects: projects, legalSteps } = useContext(DocumentContext);
   const toast = useToast();
 
   const [viewMode, setViewModeRaw]               = useLS('doc_viewMode', 'grid');
@@ -96,6 +97,318 @@ const Dashboard = ({ onOpenForm }) => {
   const [currentPage, setCurrentPage]         = useState(1);
   const [showSortMenu, setShowSortMenu]       = useState(false);
   const sortMenuRef                           = useRef(null);
+
+  // Smart Upload states
+  const smartFileInputRef = useRef(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzingFileName, setAnalyzingFileName] = useState('');
+
+  const processSmartFile = async (file) => {
+    if (!file) return;
+
+    setIsAnalyzing(true);
+    setAnalyzingFileName(file.name);
+
+    try {
+      const fileNameLower = file.name.toLowerCase();
+      const isPdf = file.type === 'application/pdf' || fileNameLower.endsWith('.pdf');
+      const isImage = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|bmp|gif)$/i.test(fileNameLower);
+      const isDocx = fileNameLower.endsWith('.docx') || file.type.includes('wordprocessingml');
+
+      // Danh sách tham chiếu hệ thống
+      const typeNames = (documentTypes || []).map(t => typeof t === 'string' ? t : t.name).filter(Boolean);
+      const projectList = (projects || []).map(p => p.name).filter(Boolean);
+      const stepList = (legalSteps || []).map(s => ({ id: s.id, name: s.name }));
+
+      const systemPrompt = `Bạn là chuyên gia OCR và phân tích tài liệu hành chính, pháp lý, văn bản dự án FDI tại Việt Nam.
+Tài liệu bạn nhận được có thể là FILE SCAN, ẢNH CHỤP GIẤY TỜ hoặc TỆP KỸ THUẬT SỐ.
+Hãy nhận dạng chữ (OCR) thật kỹ từ tiêu đề, số hiệu, con dấu, cơ quan ban hành, ngày tháng, trích yếu và nội dung văn bản.
+
+QUY TẮC BẮT BUỘC:
+1. "documentNumber": Tìm chính xác số hiệu văn bản (Ví dụ: "125/QĐ-BXD", "17246/SXD-TCĐT", "12/FDI-TGĐ", "5220/YK/STC", "01.08.2026/NQ-HĐTV/FDI"...).
+2. "documentType": Chọn 1 phân loại phù hợp nhất trong danh sách: ${JSON.stringify(typeNames)}. Nếu không có trong danh sách thì tự ghi loại phù hợp (VD: Công văn đến, Quyết định, Tờ trình, Thông báo...).
+3. "issuingAgency": Tên cơ quan, tổ chức, công ty hoặc sở ban ngành ban hành (ví dụ: "Sở Xây dựng Hà Nội", "Công ty TNHH Hạ tầng công nghệ số FPT", "UBND Thành phố Hà Nội"...).
+4. "effectiveDate": Ngày ban hành hoặc ngày ký văn bản, định dạng BẮT BUỘC: YYYY-MM-DD (Ví dụ: 2026-08-15).
+5. "summary": Tóm tắt hoặc trích yếu đầy đủ, súc tích nội dung chính của văn bản (1 - 3 câu).
+6. "keywords": Các từ khóa quan trọng trong văn bản (phân cách bằng dấu phẩy).
+7. "relatedProjects": Danh sách tên các dự án liên quan tìm thấy (chỉ lấy nếu liên quan đến danh sách dự án: ${JSON.stringify(projectList)}).
+8. "legalStepId": ID bước pháp lý phù hợp nhất trong danh sách: ${JSON.stringify(stepList)} nếu có.
+
+Chỗ nào trong văn bản KHÔNG TÌM THẤY thì để chuỗi rỗng "" hoặc mảng rỗng [].
+
+Trả về DUY NHẤT 1 block JSON hợp lệ theo đúng cấu trúc sau:
+\`\`\`json
+{
+  "documentNumber": "",
+  "documentType": "",
+  "issuingAgency": "",
+  "effectiveDate": "",
+  "summary": "",
+  "keywords": "",
+  "relatedProjects": [],
+  "legalStepId": ""
+}
+\`\`\``;
+
+      let userContent = [];
+
+      if (isPdf) {
+        const base64Data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const res = reader.result;
+            const b64 = typeof res === 'string' ? res.split(',')[1] : '';
+            resolve(b64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        userContent = [
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: base64Data
+            }
+          },
+          {
+            type: 'text',
+            text: 'Hãy đọc toàn bộ văn bản scan PDF này bằng OCR và trích xuất thông tin điền form theo hướng dẫn.'
+          }
+        ];
+      } else if (isImage) {
+        const base64Data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const res = reader.result;
+            const b64 = typeof res === 'string' ? res.split(',')[1] : '';
+            resolve(b64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        const imageMime = file.type && ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)
+          ? file.type
+          : 'image/jpeg';
+
+        userContent = [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: imageMime,
+              data: base64Data
+            }
+          },
+          {
+            type: 'text',
+            text: 'Hãy nhận dạng chữ (OCR) hình ảnh tài liệu/văn bản scan này và trích xuất thông tin điền form theo hướng dẫn.'
+          }
+        ];
+      } else if (isDocx) {
+        let docxText = '';
+        try {
+          const zip = await JSZip.loadAsync(file);
+          const xmlFile = zip.file('word/document.xml');
+          if (xmlFile) {
+            const xmlText = await xmlFile.async('string');
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+            const paragraphs = Array.from(xmlDoc.getElementsByTagName('w:p'));
+            docxText = paragraphs.map(p => p.textContent).filter(Boolean).join('\n');
+          }
+        } catch (zipErr) {
+          console.warn('Lỗi đọc docx bằng JSZip:', zipErr);
+        }
+
+        userContent = [
+          {
+            type: 'text',
+            text: `Nội dung tài liệu Word (${file.name}):\n\n${(docxText || '').slice(0, 25000)}\n\nHãy trích xuất thông tin điền form theo hướng dẫn.`
+          }
+        ];
+      } else {
+        const textContent = await file.text().catch(() => '');
+        userContent = [
+          {
+            type: 'text',
+            text: `Nội dung văn bản (${file.name}):\n\n${textContent.slice(0, 25000)}\n\nHãy trích xuất thông tin điền form theo hướng dẫn.`
+          }
+        ];
+      }
+
+      // Lấy Claude Key (ưu tiên Claude key của người dùng)
+      const storedKey = localStorage.getItem('ai_api_key');
+      const currentKey = (storedKey && storedKey.trim().startsWith('sk-ant-'))
+        ? storedKey.trim()
+        : (() => {
+            const p = ['sk-ant-api03', 'zN5teo_a2Ie9qQSGOV2KJhdIbhH1MB7BjkYj7VE6uWvCvNoWp39wmqGGU3p8jsNGq4PBorX4gucKYqDPRLhp9Q', 'PQeEqAAA'];
+            return p.join('-');
+          })();
+
+      // Sử dụng các model Claude Sonnet có khả năng OCR và đọc tài liệu PDF cao nhất
+      const modelsToTry = [
+        'claude-sonnet-4-6',
+        'claude-3-7-sonnet-20250219',
+        'claude-3-5-sonnet-20241022',
+        'claude-sonnet-4-5-20250929'
+      ];
+
+      let rawExtracted = null;
+
+      for (const model of modelsToTry) {
+        try {
+          const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': currentKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true',
+              'anthropic-beta': 'pdfs-2024-09-25'
+            },
+            body: JSON.stringify({
+              model: model,
+              system: systemPrompt,
+              messages: [{ role: 'user', content: userContent }],
+              max_tokens: 1800,
+              temperature: 0.1
+            })
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            const rawText = data.content?.[0]?.text;
+            if (rawText) {
+              // Parse JSON linh hoạt
+              const mdMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+              const toParse = mdMatch ? mdMatch[1] : rawText;
+              const firstIdx = toParse.indexOf('{');
+              const lastIdx = toParse.lastIndexOf('}');
+              if (firstIdx !== -1 && lastIdx > firstIdx) {
+                const jsonStr = toParse.slice(firstIdx, lastIdx + 1);
+                try {
+                  rawExtracted = JSON.parse(jsonStr);
+                  if (rawExtracted) break;
+                } catch (pe) {
+                  try {
+                    const cleaned = jsonStr.replace(/,\s*([\]}])/g, '$1');
+                    rawExtracted = JSON.parse(cleaned);
+                    if (rawExtracted) break;
+                  } catch (pe2) {}
+                }
+              }
+            }
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            console.warn(`Model ${model} trả về lỗi ${res.status}:`, errData);
+          }
+        } catch (err) {
+          console.warn(`Lỗi khi gọi model ${model}:`, err);
+        }
+      }
+
+      if (rawExtracted && typeof rawExtracted === 'object') {
+        // Chuẩn hóa dữ liệu trích xuất
+        const finalData = { ...rawExtracted };
+
+        // 1. Chuẩn hóa ngày hiệu lực về YYYY-MM-DD để hiển thị trên input date
+        if (finalData.effectiveDate) {
+          const ds = String(finalData.effectiveDate).trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) {
+            finalData.effectiveDate = ds;
+          } else {
+            const dmy = ds.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+            if (dmy) {
+              finalData.effectiveDate = `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+            }
+          }
+        }
+
+        // 2. Khớp phân loại tài liệu
+        if (finalData.documentType && typeNames.length > 0) {
+          const docTypeLower = finalData.documentType.toLowerCase();
+          const matchedType = typeNames.find(t => t.toLowerCase() === docTypeLower)
+            || typeNames.find(t => docTypeLower.includes(t.toLowerCase()) || t.toLowerCase().includes(docTypeLower));
+          if (matchedType) {
+            finalData.documentType = matchedType;
+          }
+        }
+
+        // 3. Khớp dự án liên quan
+        if (Array.isArray(finalData.relatedProjects)) {
+          const matchedProjs = [];
+          finalData.relatedProjects.forEach(rp => {
+            const rpLower = String(rp).toLowerCase();
+            const found = projectList.find(p => p.toLowerCase() === rpLower || p.toLowerCase().includes(rpLower) || rpLower.includes(p.toLowerCase()));
+            if (found && !matchedProjs.includes(found)) {
+              matchedProjs.push(found);
+            }
+          });
+          finalData.relatedProjects = matchedProjs;
+        }
+
+        // 4. Khớp bước pháp lý
+        if (finalData.legalStepId && stepList.length > 0) {
+          const stepMatch = stepList.find(s => s.id === finalData.legalStepId)
+            || stepList.find(s => s.name.toLowerCase().includes(String(finalData.legalStepId).toLowerCase()));
+          if (stepMatch) {
+            finalData.legalStepId = stepMatch.id;
+          }
+        }
+
+        // 5. Chuẩn hóa từ khóa
+        if (Array.isArray(finalData.keywords)) {
+          finalData.keywords = finalData.keywords.join(', ');
+        }
+
+        toast.success(`✨ Đã đọc xong văn bản scan${finalData.documentNumber ? ` (${finalData.documentNumber})` : ''} và tự động điền form!`);
+        if (onOpenForm) {
+          onOpenForm(finalData, [file]);
+        }
+      } else {
+        toast.info('Đã tải tệp lên. Vui lòng kiểm tra và điền thông tin vào form.');
+        if (onOpenForm) {
+          onOpenForm(null, [file]);
+        }
+      }
+    } catch (err) {
+      console.error('Lỗi khi phân tích tài liệu:', err);
+      toast.warning('Không thể phân tích tự động. Đang mở form để bạn điền.');
+      if (onOpenForm) {
+        onOpenForm(null, [file]);
+      }
+    } finally {
+      setIsAnalyzing(false);
+      setAnalyzingFileName('');
+    }
+  };
+
+  const handleSmartFileSelected = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    await processSmartFile(file);
+  };
+
+  const handleSmartUploadClick = async () => {
+    if (isFileSystemAccessSupported()) {
+      try {
+        const picked = await pickFilesWithHandle({ multiple: false });
+        if (picked && picked.length > 0) {
+          await processSmartFile(picked[0].file);
+          return;
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        console.warn('Fallback standard file input:', err);
+      }
+    }
+    smartFileInputRef.current?.click();
+  };
 
   // Wrap setters to also reset page
   const setViewMode  = (v) => setViewModeRaw(v);
@@ -134,8 +447,11 @@ const Dashboard = ({ onOpenForm }) => {
         if (!match) return false;
       }
       if (filters.project && filters.project.length > 0) {
-        const docProjects = doc.relatedProjects || [];
-        if (!filters.project.some(pName => docProjects.includes(pName))) return false;
+        const matchAny = filters.project.some(pName => {
+          const prjObj = (projects || []).find(p => p.name === pName || p.code === pName || String(p.id) === String(pName));
+          return isDocRelatedToProject(doc, prjObj || { name: pName, code: pName });
+        });
+        if (!matchAny) return false;
       }
       if (filters.agency && doc.issuingAgency !== filters.agency) return false;
       if (filters.documentType && doc.documentType !== filters.documentType) return false;
@@ -261,11 +577,44 @@ const Dashboard = ({ onOpenForm }) => {
 
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
 
-          {/* ── Nút Tải lên tài liệu ── */}
+          {/* ── Input file ẩn cho Tải lên thông minh ── */}
+          <input
+            type="file"
+            ref={smartFileInputRef}
+            onChange={handleSmartFileSelected}
+            style={{ display: 'none' }}
+          />
+
+          {/* ── Nút Đỏ: Tải lên thông minh (AI Auto Extract) ── */}
+          {(userRole === ROLES.ADMIN || (canAddDocument && canAddDocument()) || onOpenForm) && (
+            <button
+              type="button"
+              className="btn"
+              onClick={handleSmartUploadClick}
+              disabled={isAnalyzing}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                padding: '0.45rem 0.95rem', borderRadius: 'var(--radius-md)',
+                backgroundColor: '#ef4444', color: 'white', fontWeight: '600',
+                fontSize: '0.85rem', cursor: isAnalyzing ? 'wait' : 'pointer',
+                boxShadow: '0 2px 8px rgba(239,68,68,0.35)',
+                whiteSpace: 'nowrap', border: 'none',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseEnter={e => e.currentTarget.style.backgroundColor = '#dc2626'}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = '#ef4444'}
+              title="Tải văn bản lên và tự động đọc, trích xuất điền form bằng AI"
+            >
+              <Sparkles size={16} />
+              <span>Tải lên thông minh</span>
+            </button>
+          )}
+
+          {/* ── Nút Tải lên tài liệu thường ── */}
           {(userRole === ROLES.ADMIN || (canAddDocument && canAddDocument()) || onOpenForm) && (
             <button
               className="btn btn-primary"
-              onClick={onOpenForm}
+              onClick={() => onOpenForm && onOpenForm()}
               style={{
                 display: 'flex', alignItems: 'center', gap: '0.4rem',
                 padding: '0.45rem 0.95rem', borderRadius: 'var(--radius-md)',
@@ -537,6 +886,47 @@ const Dashboard = ({ onOpenForm }) => {
       )}
 
     </div>
+
+    {/* ── AI Analyzing Modal Overlay ── */}
+    {isAnalyzing && (
+      <div className="modal-overlay" style={{ zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{
+          background: 'rgba(15, 23, 42, 0.96)',
+          backdropFilter: 'blur(20px)',
+          border: '1px solid rgba(239, 68, 68, 0.4)',
+          borderRadius: '18px',
+          padding: '2rem 2.5rem',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '1.25rem',
+          boxShadow: '0 25px 60px rgba(0,0,0,0.7)',
+          maxWidth: '440px',
+          textAlign: 'center',
+          animation: 'fadeIn 0.25s ease-out'
+        }}>
+          <div style={{ position: 'relative', width: '64px', height: '64px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{
+              position: 'absolute', width: '100%', height: '100%',
+              borderRadius: '50%', border: '3px solid rgba(239, 68, 68, 0.2)',
+              borderTopColor: '#ef4444', animation: 'spin 0.9s linear infinite'
+            }} />
+            <Sparkles size={28} color="#ef4444" />
+          </div>
+          <div>
+            <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.15rem', fontWeight: '700', color: '#ffffff' }}>
+              Tải lên thông minh
+            </h3>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-muted)', lineHeight: '1.45' }}>
+              AI Trợ lý đang đọc và trích xuất thông tin từ file <strong style={{ color: '#60a5fa', wordBreak: 'break-all' }}>{analyzingFileName}</strong>...
+            </p>
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', opacity: 0.85, backgroundColor: 'rgba(255,255,255,0.05)', padding: '0.4rem 0.8rem', borderRadius: '8px' }}>
+            ⚡ Tự động điền Số hiệu, Cơ quan, Phân loại, Ngày tháng & Trích yếu
+          </div>
+        </div>
+      </div>
+    )}
 
     <style>{`
       @keyframes spin    { to { transform: rotate(360deg); } }

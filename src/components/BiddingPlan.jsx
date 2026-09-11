@@ -164,19 +164,15 @@ const FileUploadCell = ({ value, onChange }) => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
 
-    const { valid, errors } = validateFileSize(files);
-    if (errors.length) {
-      const toast = window.__biddingPlanToast;
-      if (toast) toast.error(`File quá lớn (tối đa 50MB): ${errors.join('; ')}`);
-      if (!valid.length) return;
-    }
+    const { valid } = validateFileSize(files);
+    if (!valid.length) return;
 
     setUploading(true);
     try {
       const newFiles = await Promise.all(
         valid.map(async (file) => {
           const storageRef = ref(storage, `biddingPlan/${Date.now()}_${file.name}`);
-          const snapshot = await withTimeout(uploadBytes(storageRef, file), 20000);
+          const snapshot = await withTimeout(uploadBytes(storageRef, file), 300000);
           const url = await getDownloadURL(snapshot.ref);
           return { name: file.name, url };
         })

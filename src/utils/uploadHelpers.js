@@ -3,29 +3,17 @@
  * Tránh copy-paste `withTimeout` trong PhapLy / TienDo / NghiemThu.
  */
 
-/** Giới hạn dung lượng tối đa cho mỗi file upload (50 MB). */
-export const MAX_FILE_SIZE_MB = 50;
-export const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+/** Không giới hạn dung lượng file upload */
+export const MAX_FILE_SIZE_MB = Infinity;
+export const MAX_FILE_SIZE_BYTES = Infinity;
 
 /**
- * Kiểm tra danh sách file có file nào vượt quá giới hạn dung lượng không.
+ * Kiểm tra danh sách file (Đã bỏ giới hạn dung lượng file).
  * @param {File[]} files - Danh sách file cần kiểm tra
- * @param {number} [maxBytes] - Giới hạn dung lượng (bytes), mặc định 50 MB
- * @returns {{ valid: File[], errors: string[] }} - File hợp lệ và danh sách lỗi
+ * @returns {{ valid: File[], errors: string[] }} - File hợp lệ và danh sách lỗi (luôn rỗng)
  */
-export const validateFileSize = (files, maxBytes = MAX_FILE_SIZE_BYTES) => {
-  const valid = [];
-  const errors = [];
-  for (const file of files) {
-    if (file.size > maxBytes) {
-      errors.push(
-        `"${file.name}" vượt quá ${MAX_FILE_SIZE_MB}MB (${(file.size / 1024 / 1024).toFixed(1)}MB)`
-      );
-    } else {
-      valid.push(file);
-    }
-  }
-  return { valid, errors };
+export const validateFileSize = (files) => {
+  return { valid: Array.from(files || []), errors: [] };
 };
 
 /**
