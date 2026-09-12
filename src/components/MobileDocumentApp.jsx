@@ -3,17 +3,22 @@ import {
   Search, ArrowLeft, Plus, Download, Eye, FileText, Check, ChevronRight, ChevronDown, ChevronLeft,
   Building2, Calendar, Shield, Share2, Filter, AlertCircle, Sparkles, Paperclip, X, ExternalLink,
   Sun, Moon, RefreshCw, Star, Info, MapPin, Globe, Settings, Home, LogOut, Camera,
-  Layers, Folder, Users, Mail, Phone
+  Layers, Folder, Users, Mail, Phone, Bell, AlertTriangle, CheckCheck, Trash2
 } from 'lucide-react';
+import { format } from 'date-fns';
+import { vi } from 'date-fns/locale';
 import { DocumentContext } from '../context/DocumentContext';
 import { EMPLOYEE_LEVELS } from '../data';
 import { auth, storage } from '../firebase';
 import { signOut, updateProfile } from 'firebase/auth';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { isDocRelatedToProject } from '../utils/projectMatcher';
+import RejectDocModal from './RejectDocModal';
 
 // ── Bảng màu Pastel & Màu nền linh hoạt cho Chế độ Sáng / Tối ─────────────
 const SCREEN_COLORS = {
   overview: '#eff6ff',      // Sky Blue Pastel
+  notifications: '#eff6ff', // Sky Blue Pastel
   settings: '#f8fafc',      // Neutral Slate Light
   user_profile: '#f8fafc',
   search: '#eff6ff',        // Sky Blue Pastel
@@ -870,23 +875,35 @@ const MobileProjectMembersSection = ({
 
 const MobileDocumentApp = ({ onCloseMobileView }) => {
   const {
-    allDocuments: documents = [],
+    documents = [],
     allProjects: allProjects = [],
     addDocument,
     deleteDocument,
+    approveDocument,
+    rejectDocument,
+    canApproveDocs,
     members = [],
     editMember,
     addMember,
     currentUser,
     userRole,
     documentTypes: dynamicDocTypes = [],
-    uniqueAgencies: issuingAgencies = []
+    uniqueAgencies: issuingAgencies = [],
+    userNotifications = [],
+    markNotificationAsRead,
+    markAllNotificationsAsRead,
+    deleteNotification
   } = useContext(DocumentContext);
 
   // Screen Navigation States
   const [activeScreen, setActiveScreen] = useState('overview');
   const [selectedDoc, setSelectedDoc] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
+  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+
+  const unreadNotifsCount = useMemo(() => {
+    return (userNotifications || []).filter(n => !n.isRead).length;
+  }, [userNotifications]);
 
   // Dark Mode State
   const [isDark, setIsDark] = useState(() => {
@@ -971,7 +988,10 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
   const resolveProjectDisplayName = (rawPrj) => {
     if (!rawPrj) return 'Dự án chung';
     if (typeof rawPrj === 'object') {
-      const matched = (allProjects || []).find(p => String(p.id) === String(rawPrj.id));
+      const matched = (allProjects || []).find(p => 
+        String(p.id) === String(rawPrj.id) ||
+        isDocRelatedToProject({ relatedProjects: [rawPrj] }, p)
+      );
       if (matched && matched.name) return matched.name;
       if (rawPrj.name) {
         if (rawPrj.name.includes('Khu công viên công nghệ số và hỗn hợp')) return 'Khu đô thị Công viên công nghệ số FPT';
@@ -987,11 +1007,20 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
     if (foundByCode && foundByCode.name) return foundByCode.name;
     const foundByName = (allProjects || []).find(p => (p.name || '').toLowerCase() === str.toLowerCase());
     if (foundByName && foundByName.name) return foundByName.name;
+
+    // Khớp thông minh qua projectMatcher (ví dụ "Tòa nhà công nghệ số 01", "CNS1", "CNS-01" -> "Dự án Toà nhà CNS-1")
+    const matchedByRule = (allProjects || []).find(p => isDocRelatedToProject({ relatedProjects: [str] }, p));
+    if (matchedByRule && matchedByRule.name) return matchedByRule.name;
+
     return str || 'Dự án chung';
   };
 
   const getDocProjectName = (doc) => {
     if (!doc) return 'Dự án chung';
+    // 1. Khớp thông minh với danh sách dự án
+    const matchedPrj = (allProjects || []).find(p => isDocRelatedToProject(doc, p));
+    if (matchedPrj && matchedPrj.name) return matchedPrj.name;
+
     if (doc.projectId) {
       const found = (allProjects || []).find(p => String(p.id) === String(doc.projectId));
       if (found && found.name) return found.name;
@@ -1149,54 +1178,7 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
     );
   };
 
-  // Helper kiểm tra tài liệu thuộc về dự án: CHỈ khớp các tài liệu được tag trực tiếp tên / ID / mã dự án liên quan
-  const isDocRelatedToProject = (doc, prj) => {
-    if (!doc || !prj) return false;
-    
-    const prjId = String(prj.id || '').trim().toLowerCase();
-    const prjCode = String(prj.code || '').trim().toLowerCase();
-    const prjName = String(prj.name || '').trim().toLowerCase();
-    
-    const docPrjId = String(doc.projectId || '').trim().toLowerCase();
-    const docPrjName = String(doc.projectName || '').trim().toLowerCase();
-    
-    // 1. Khớp trực tiếp qua trường projectId hoặc projectName của tài liệu
-    if (docPrjId && prjId && docPrjId === prjId) return true;
-    if (docPrjId && prjCode && docPrjId === prjCode) return true;
-    if (docPrjName && prjName && (docPrjName === prjName || (prjName.includes(docPrjName) && docPrjName.length > 5))) return true;
-    if (docPrjName && prjCode && docPrjName === prjCode) return true;
-    
-    // 2. Khớp trực tiếp qua mảng relatedProjects (chỉ khớp chính xác tên, ID hoặc mã dự án được tag)
-    if (Array.isArray(doc.relatedProjects) && doc.relatedProjects.length > 0) {
-      for (const item of doc.relatedProjects) {
-        if (!item) continue;
-        if (typeof item === 'object') {
-          const iId = String(item.id || '').trim().toLowerCase();
-          const iCode = String(item.code || '').trim().toLowerCase();
-          const iName = String(item.name || '').trim().toLowerCase();
-          if (prjId && iId === prjId) return true;
-          if (prjCode && iCode === prjCode) return true;
-          if (prjName && (iName === prjName || iName.includes(prjName) || prjName.includes(iName))) return true;
-        } else {
-          const str = String(item).trim().toLowerCase();
-          if (prjId && str === prjId) return true;
-          if (prjCode && str === prjCode) return true;
-          if (prjName && (str === prjName || str.includes(prjName) || prjName.includes(str))) return true;
-          
-          // Chỉ chuyển đổi riêng tên cũ thành tên mới của đúng 1 dự án FPT:
-          // "Khu công viên công nghệ số và hỗn hợp" <-> "Khu đô thị Công viên công nghệ số FPT" (GPMB-CNS)
-          if (
-            (str.includes('công nghệ số và hỗn hợp') || str === 'gpmb-cns') &&
-            (prjCode === 'gpmb-cns' || prjName.includes('công viên công nghệ số fpt') || prjName.includes('công nghệ số và hỗn hợp'))
-          ) {
-            return true;
-          }
-        }
-      }
-    }
 
-    return false;
-  };
 
   // List of active documents
   const activeDocsList = useMemo(() => {
@@ -1424,6 +1406,9 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
       );
 
       const matchedPrj = (allProjects || []).find(p => (uploadFormState.relatedProjects || []).includes(p.code));
+      const canApprove = userRole === 'Admin' || (canApproveDocs && canApproveDocs(matchedPrj?.id));
+      const docStatus = canApprove ? 'approved' : 'pending_approval';
+      const docApprovalStatus = canApprove ? 'approved' : 'pending';
 
       const newDoc = {
         code: uploadFormState.code,
@@ -1441,13 +1426,27 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
         projectId: matchedPrj?.id || (allProjects[0]?.id || ''),
         projectName: matchedPrj?.name || 'Dự án chung',
         attachments: finalAttachments,
+        status: docStatus,
+        approvalStatus: docApprovalStatus,
+        createdByEmail: firebaseUser?.email || userEmail || '',
+        createdByName: userName,
+        uploader: userName,
         createdAt: new Date().toISOString()
       };
+
+      if (canApprove) {
+        newDoc.approvedBy = firebaseUser?.email || userEmail || '';
+        newDoc.approvedAt = new Date().toISOString();
+      }
 
       if (addDocument) {
         await addDocument(newDoc);
       }
-      showToast('Tải lên tài liệu thành công! 📄');
+      if (docStatus === 'pending_approval') {
+        showToast('Tài liệu đã tải lên & đang Chờ phê duyệt! ⏳');
+      } else {
+        showToast('Tải lên tài liệu thành công! 📄');
+      }
       setActiveScreen('overview');
       setUploadFormState({
         code: '',
@@ -1631,13 +1630,14 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
       list = list.filter(d => (d.documentType || d.type || '').toLowerCase() === filterLower);
     }
     if (selectedProjectFilterChip !== 'Tất cả') {
-      const pCodeLower = selectedProjectFilterChip.toLowerCase();
-      list = list.filter(d => {
-        const prj = (allProjects || []).find(p => String(p.id) === String(d.projectId));
-        const codeMatches = (prj?.code || '').toLowerCase() === pCodeLower;
-        const relMatches = Array.isArray(d.relatedProjects) && d.relatedProjects.some(c => String(c).toLowerCase() === pCodeLower);
-        return codeMatches || relMatches;
-      });
+      const pLower = selectedProjectFilterChip.toLowerCase();
+      const targetPrj = (allProjects || []).find(p => 
+        (p.code && p.code.toLowerCase() === pLower) ||
+        (p.name && p.name.toLowerCase() === pLower) ||
+        String(p.id) === selectedProjectFilterChip
+      ) || { code: selectedProjectFilterChip, name: selectedProjectFilterChip };
+
+      list = list.filter(d => isDocRelatedToProject(d, targetPrj));
     }
     if (searchKeyword.trim()) {
       const kw = searchKeyword.trim().toLowerCase();
@@ -1744,7 +1744,7 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
               <span style={{ fontSize: '1.5rem', fontWeight: '400', color: isDark ? '#cbd5e1' : '#475569', letterSpacing: '-0.5px' }}>Doc</span>
             </div>
 
-            {/* MỤC 2: 3 nút chức năng đẩy sát lề phải: [Làm mới] [Cài đặt] [Tìm kiếm] */}
+            {/* MỤC 2: Các nút chức năng đẩy sát lề phải: [Làm mới] [Thông báo] [Cài đặt] [Tìm kiếm] */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
               <button
                 onClick={handleRealtimeRefresh}
@@ -1756,6 +1756,43 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
                 }}
               >
                 <RefreshCw size={18} />
+              </button>
+
+              <button
+                onClick={() => setActiveScreen('notifications')}
+                title="Thông báo phản hồi"
+                style={{
+                  position: 'relative',
+                  background: isDark ? '#334155' : '#f1f5f9', border: 'none', borderRadius: '12px',
+                  width: '38px', height: '38px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: unreadNotifsCount > 0 ? (isDark ? '#f87171' : '#dc2626') : (isDark ? '#cbd5e1' : '#64748b'),
+                  cursor: 'pointer'
+                }}
+              >
+                <Bell size={18} />
+                {unreadNotifsCount > 0 && (
+                  <span style={{
+                    position: 'absolute',
+                    top: '-4px',
+                    right: '-4px',
+                    backgroundColor: '#ef4444',
+                    color: '#ffffff',
+                    fontSize: '0.62rem',
+                    fontWeight: '900',
+                    borderRadius: '999px',
+                    minWidth: '17px',
+                    height: '17px',
+                    padding: '0 4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: `2px solid ${cardBg}`,
+                    boxShadow: '0 2px 5px rgba(239,68,68,0.4)',
+                    lineHeight: 1
+                  }}>
+                    {unreadNotifsCount > 99 ? '99+' : unreadNotifsCount}
+                  </span>
+                )}
               </button>
 
               <button
@@ -3155,13 +3192,20 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
             }}>
               {/* MỤC 5: THAY MÃ LƯU TÀI LIỆU BẰNG "SỐ TÀI LIỆU, VĂN BẢN" CÙNG HÀNG */}
               <div style={{ backgroundColor: cardBg, borderRadius: '16px', padding: '16px', border: `1px solid ${borderColor}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '0.82rem', fontWeight: '700', color: subTextColor }}>
-                    Số tài liệu, văn bản:
-                  </span>
-                  <span style={{ backgroundColor: '#e0edff', color: '#2563eb', fontSize: '0.85rem', fontWeight: '800', padding: '4px 10px', borderRadius: '8px' }}>
-                    {selectedDoc.documentNumber || selectedDoc.code || selectedDoc.documentCode || 'Chưa xác định'}
-                  </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.82rem', fontWeight: '700', color: subTextColor }}>
+                      Số tài liệu, văn bản:
+                    </span>
+                    <span style={{ backgroundColor: '#e0edff', color: '#2563eb', fontSize: '0.85rem', fontWeight: '800', padding: '4px 10px', borderRadius: '8px' }}>
+                      {selectedDoc.documentNumber || selectedDoc.code || selectedDoc.documentCode || 'Chưa xác định'}
+                    </span>
+                  </div>
+                  {(selectedDoc.status === 'pending_approval' || selectedDoc.approvalStatus === 'pending') && (
+                    <span style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#f97316', border: '1px solid rgba(249, 115, 22, 0.35)', fontSize: '0.75rem', fontWeight: '800', padding: '4px 10px', borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      🟠 Chờ phê duyệt
+                    </span>
+                  )}
                 </div>
 
                 <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: textColor, margin: 0, lineHeight: '1.4' }}>
@@ -3231,6 +3275,64 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
                   ))
                 )}
               </div>
+
+              {/* Phê duyệt / Từ chối (Nếu là tài liệu Chờ duyệt và user có quyền) */}
+              {(selectedDoc.status === 'pending_approval' || selectedDoc.approvalStatus === 'pending') && (userRole === 'Admin' || (canApproveDocs && canApproveDocs(selectedDoc.projectId))) && (
+                <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await approveDocument(selectedDoc.id);
+                        showToast('Đã phê duyệt tài liệu thành công! 🟢');
+                        setActiveScreen('overview');
+                      } catch (e) {
+                        showToast('Lỗi khi phê duyệt: ' + (e.message || ''));
+                      }
+                    }}
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#10b981',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '12px',
+                      padding: '12px',
+                      fontSize: '0.88rem',
+                      fontWeight: '800',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      boxShadow: '0 3px 10px rgba(16,185,129,0.3)'
+                    }}
+                  >
+                    <Check size={18} /> Phê duyệt đăng tải
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsRejectModalOpen(true)}
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#ef4444',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '12px',
+                      padding: '12px',
+                      fontSize: '0.88rem',
+                      fontWeight: '800',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      boxShadow: '0 3px 10px rgba(239,68,68,0.3)'
+                    }}
+                  >
+                    <Trash2 size={18} /> Từ chối & Xóa
+                  </button>
+                </div>
+              )}
             </main>
           </div>
         );
@@ -3345,6 +3447,269 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
         </div>
       )}
 
+      {/* ── 9. MÀN HÌNH THÔNG BÁO PHẢN HỒI (NOTIFICATIONS SCREEN) ── */}
+      {activeScreen === 'notifications' && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+          <header style={{
+            padding: HEADER_SAFE_PADDING,
+            backgroundColor: cardBg,
+            borderBottom: `1px solid ${borderColor}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            flexShrink: 0,
+            zIndex: 10,
+            boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.03)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <button onClick={() => setActiveScreen('overview')} style={{ background: 'none', border: 'none', color: textColor, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}>
+                <ArrowLeft size={22} />
+              </button>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: '800', margin: 0, color: textColor }}>
+                Thông báo phản hồi
+              </h2>
+            </div>
+            {unreadNotifsCount > 0 && (
+              <button
+                onClick={async () => {
+                  try {
+                    await markAllNotificationsAsRead();
+                    showToast('Đã đánh dấu tất cả là đã đọc.');
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+                style={{
+                  background: isDark ? 'rgba(59,130,246,0.15)' : '#eff6ff',
+                  border: '1px solid rgba(59,130,246,0.3)',
+                  color: '#2563eb',
+                  borderRadius: '10px',
+                  padding: '6px 10px',
+                  fontSize: '0.75rem',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <CheckCheck size={14} /> Đã đọc hết
+              </button>
+            )}
+          </header>
+
+          <main style={{
+            flex: 1,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            WebkitOverflowScrolling: 'touch',
+            touchAction: 'pan-y',
+            overscrollBehaviorY: 'contain',
+            scrollBehavior: 'smooth',
+            padding: MAIN_SAFE_PADDING,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+            boxSizing: 'border-box'
+          }}>
+            <div style={{ fontSize: '0.82rem', color: subTextColor, paddingLeft: '4px' }}>
+              Thông báo phản hồi kiểm duyệt văn bản & tài liệu gửi trực tiếp đến tài khoản của bạn.
+            </div>
+
+            {userNotifications.length === 0 ? (
+              <div style={{
+                backgroundColor: cardBg,
+                padding: '40px 20px',
+                borderRadius: '18px',
+                textAlign: 'center',
+                color: subTextColor,
+                fontSize: '0.88rem',
+                border: `1px solid ${borderColor}`,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '12px',
+                marginTop: '20px'
+              }}>
+                <div style={{
+                  width: '56px',
+                  height: '56px',
+                  borderRadius: '50%',
+                  backgroundColor: isDark ? '#1e293b' : '#f1f5f9',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: subTextColor
+                }}>
+                  <Bell size={28} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: '700', color: textColor, marginBottom: '4px' }}>Không có thông báo mới</div>
+                  <div style={{ fontSize: '0.8rem' }}>Bạn chưa có thông báo phản hồi nào từ người duyệt tài liệu.</div>
+                </div>
+              </div>
+            ) : (
+              userNotifications.map((notif) => {
+                const isUnread = !notif.isRead;
+                const formattedDate = notif.createdAt?.toDate
+                  ? format(notif.createdAt.toDate(), 'dd/MM/yyyy HH:mm', { locale: vi })
+                  : notif.createdAt ? format(new Date(notif.createdAt), 'dd/MM/yyyy HH:mm', { locale: vi }) : '';
+
+                return (
+                  <div
+                    key={notif.id}
+                    style={{
+                      backgroundColor: cardBg,
+                      borderRadius: '16px',
+                      padding: '14px 16px',
+                      border: isUnread ? '1.5px solid #f87171' : `1px solid ${borderColor}`,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      boxShadow: isUnread ? '0 4px 12px rgba(239,68,68,0.1)' : '0 2px 6px rgba(0,0,0,0.02)',
+                      position: 'relative',
+                      overflow: 'hidden'
+                    }}
+                  >
+                    {isUnread && (
+                      <div style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        bottom: 0,
+                        width: '4px',
+                        backgroundColor: '#ef4444'
+                      }} />
+                    )}
+
+                    {/* Top Row: Badge & Time */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '3px 8px',
+                          borderRadius: '8px',
+                          fontSize: '0.72rem',
+                          fontWeight: '800',
+                          backgroundColor: isDark ? 'rgba(239,68,68,0.2)' : '#fee2e2',
+                          color: '#dc2626'
+                        }}>
+                          <AlertTriangle size={12} /> Từ chối duyệt
+                        </span>
+                        {isUnread && (
+                          <span style={{
+                            fontSize: '0.68rem',
+                            fontWeight: '800',
+                            color: '#ef4444',
+                            backgroundColor: isDark ? 'rgba(239,68,68,0.15)' : '#fff1f2',
+                            padding: '2px 6px',
+                            borderRadius: '6px'
+                          }}>
+                            Mới
+                          </span>
+                        )}
+                      </div>
+                      {formattedDate && (
+                        <span style={{ fontSize: '0.74rem', color: subTextColor }}>
+                          {formattedDate}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Document Title / Number */}
+                    <div>
+                      <div style={{ fontSize: '0.92rem', fontWeight: '800', color: textColor, lineHeight: 1.35 }}>
+                        {notif.documentNumber ? `Số hiệu: ${notif.documentNumber}` : notif.title}
+                      </div>
+                      {notif.documentSummary && (
+                        <div style={{ fontSize: '0.8rem', color: subTextColor, marginTop: '3px', lineHeight: 1.3 }}>
+                          {notif.documentSummary}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Rejection Reason Box */}
+                    <div style={{
+                      backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : '#fef2f2',
+                      border: '1px solid rgba(239,68,68,0.2)',
+                      borderRadius: '10px',
+                      padding: '10px 12px',
+                      fontSize: '0.82rem',
+                      lineHeight: 1.4
+                    }}>
+                      <span style={{ fontWeight: '800', color: '#b91c1c' }}>Lý do từ chối: </span>
+                      <span style={{ color: isDark ? '#fca5a5' : '#991b1b', fontWeight: '500' }}>
+                        {notif.reason}
+                      </span>
+                    </div>
+
+                    {/* Sender Info & Actions */}
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingTop: '6px',
+                      borderTop: `1px solid ${isDark ? '#1e293b' : '#f1f5f9'}`,
+                      gap: '8px',
+                      flexWrap: 'wrap'
+                    }}>
+                      <span style={{ fontSize: '0.74rem', color: subTextColor }}>
+                        Người duyệt: <strong style={{ color: textColor }}>{notif.senderName || notif.senderEmail || 'Ban quản trị'}</strong>
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {isUnread && (
+                          <button
+                            onClick={() => markNotificationAsRead(notif.id)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#2563eb',
+                              fontSize: '0.74rem',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                              padding: '4px 6px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <CheckCheck size={14} /> Đã đọc
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            if (window.confirm('Bạn có muốn xóa thông báo này?')) {
+                              deleteNotification(notif.id);
+                            }
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#94a3b8',
+                            fontSize: '0.74rem',
+                            cursor: 'pointer',
+                            padding: '4px 6px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                          title="Xóa thông báo"
+                        >
+                          <Trash2 size={14} /> Xóa
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </main>
+        </div>
+      )}
+
       {/* ── MỤC 1: BOTTOM FOOTER NAV VỚI ICON HOME ĐƠN SẮC PHONG CÁCH CŨ ── */}
       <footer style={{
         position: 'fixed',
@@ -3384,6 +3749,27 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
           <span style={{ fontSize: '0.72rem', fontWeight: '700' }}>Trang chủ</span>
         </button>
       </footer>
+
+      {/* Modal từ chối đăng tải tài liệu */}
+      {isRejectModalOpen && selectedDoc && (
+        <RejectDocModal
+          document={selectedDoc}
+          onClose={() => setIsRejectModalOpen(false)}
+          onConfirm={async (reason) => {
+            try {
+              const recipient = selectedDoc.createdByEmail || selectedDoc.uploaderEmail || selectedDoc.createdBy;
+              await rejectDocument(selectedDoc.id, reason, recipient);
+              setIsRejectModalOpen(false);
+              setSelectedDoc(null);
+              setActiveScreen('overview');
+              showToast('Đã từ chối và gửi thông báo đến Web & Mobile của người đăng! 📭');
+            } catch (err) {
+              console.error('Lỗi khi từ chối tài liệu:', err);
+              showToast('Lỗi khi từ chối: ' + (err.message || ''));
+            }
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -1,6 +1,8 @@
 import React, { useContext, useState, useRef, useEffect, useMemo } from 'react';
 import { ROLES } from '../constants';
-import { Search, Bell, Plus, User, FileText, X, LogOut, Camera, FolderOpen, Smartphone, ArrowLeft, Home } from 'lucide-react';
+import { Search, Bell, Plus, User, FileText, X, LogOut, Camera, FolderOpen, Smartphone, ArrowLeft, Home, AlertTriangle, Check, CheckCheck, Trash2 } from 'lucide-react';
+import { format } from 'date-fns';
+import { vi } from 'date-fns/locale';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { DocumentContext } from '../context/DocumentContext';
@@ -8,7 +10,21 @@ import ProfileModal from './ProfileModal';
 import { useToast } from '../context/UIContext';
 
 const Header = ({ currentView, onOpenForm, onNavigate, onGoBack, onGoHome, onSearchSelect }) => {
-  const { getNewCount, markAsRead, isDocNew, documents, projects, members, userRole, toggleRole, canAddDocument } = useContext(DocumentContext);
+  const { 
+    getNewCount, 
+    markAsRead, 
+    isDocNew, 
+    documents, 
+    projects, 
+    members, 
+    userRole, 
+    toggleRole, 
+    canAddDocument,
+    userNotifications = [],
+    markNotificationAsRead,
+    markAllNotificationsAsRead,
+    deleteNotification
+  } = useContext(DocumentContext);
   const [showNoti, setShowNoti] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -19,7 +35,20 @@ const Header = ({ currentView, onOpenForm, onNavigate, onGoBack, onGoHome, onSea
   const searchRef = useRef(null);
 
   const toast = useToast();
-  const newCount = getNewCount();
+  const newCount = typeof getNewCount === 'function' ? getNewCount() : 0;
+  const unreadNotifs = useMemo(() => (userNotifications || []).filter(n => !n.isRead), [userNotifications]);
+  const totalNotiBadge = newCount + unreadNotifs.length;
+
+  const formatNotiDate = (createdAt) => {
+    if (!createdAt) return '';
+    try {
+      const date = createdAt.toDate ? createdAt.toDate() : new Date(createdAt);
+      if (isNaN(date.getTime())) return '';
+      return format(date, 'dd/MM/yyyy HH:mm', { locale: vi });
+    } catch {
+      return '';
+    }
+  };
 
   // Lấy thông tin người dùng đang đăng nhập
   const firebaseUser = auth.currentUser;
@@ -259,39 +288,133 @@ const Header = ({ currentView, onOpenForm, onNavigate, onGoBack, onGoHome, onSea
         <div style={{ position: 'relative' }} ref={notiRef}>
           <button className="btn-icon" onClick={handleNotiClick} style={{ position: 'relative' }}>
             <Bell size={22} />
-            {newCount > 0 && (
-              <span style={{ position: 'absolute', top: '4px', right: '4px', width: '10px', height: '10px', backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--color-bg-surface)' }} />
+            {totalNotiBadge > 0 && (
+              <span style={{
+                position: 'absolute',
+                top: '-2px',
+                right: '-2px',
+                minWidth: '18px',
+                height: '18px',
+                padding: '0 4px',
+                backgroundColor: 'var(--color-danger)',
+                borderRadius: '10px',
+                border: '2px solid var(--color-bg-surface)',
+                color: 'white',
+                fontSize: '0.65rem',
+                fontWeight: '700',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {totalNotiBadge > 99 ? '99+' : totalNotiBadge}
+              </span>
             )}
           </button>
           {showNoti && (
-            <div style={{ position: 'absolute', top: '100%', right: '0', marginTop: '10px', width: '320px', backgroundColor: 'var(--color-bg-surface)', backdropFilter: 'blur(16px)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', border: '1px solid var(--color-border)', zIndex: 100, padding: '1rem' }}>
-              <h4 style={{ marginBottom: '1rem', fontSize: '1rem', fontWeight: '600' }}>Thông báo</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '300px', overflowY: 'auto' }}>
-              {(() => {
-                const unreadDocs = (documents || [])
-                  .filter(d => !d.isDeleted && (isDocNew ? isDocNew(d.id) : d.isNew))
-                  .slice(0, 6);
-                if (unreadDocs.length === 0) {
-                  return (
-                    <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', textAlign: 'center', padding: '1rem 0' }}>
-                      Tất cả đã đọc ✓
-                    </p>
-                  );
-                }
-                return unreadDocs.map(doc => (
-                  <div key={doc.id} style={{ display: 'flex', gap: '10px', paddingBottom: '10px', borderBottom: '1px solid var(--color-bg-surface-hover)' }}>
-                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'var(--color-primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', flexShrink: 0 }}>
-                      <FileText size={16} />
-                    </div>
-                    <div>
-                      <p style={{ fontSize: '0.875rem', margin: '0', color: 'var(--color-text-main)' }}>
-                        <span style={{ fontWeight: '600' }}>{doc.uploader}</span> vừa tải lên: <strong>{doc.documentNumber}</strong>
-                      </p>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Mã: {doc.documentCode}</span>
-                    </div>
+            <div style={{ position: 'absolute', top: '100%', right: '0', marginTop: '10px', width: '360px', backgroundColor: 'var(--color-bg-surface)', backdropFilter: 'blur(16px)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', border: '1px solid var(--color-border)', zIndex: 100, padding: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+                <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: '700' }}>Thông báo</h4>
+                {unreadNotifs.length > 0 && (
+                  <button
+                    onClick={() => markAllNotificationsAsRead && markAllNotificationsAsRead()}
+                    style={{ background: 'none', border: 'none', color: '#60a5fa', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px', padding: 0 }}
+                  >
+                    <CheckCheck size={13} /> Đã đọc tất cả
+                  </button>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '360px', overflowY: 'auto' }}>
+                
+                {/* ── THÔNG BÁO TỪ CHỐI TÀI LIỆU ── */}
+                {userNotifications && userNotifications.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '0.5rem' }}>
+                    <span style={{ fontSize: '0.72rem', fontWeight: '700', textTransform: 'uppercase', color: '#f87171', letterSpacing: '0.5px' }}>
+                      Phản hồi từ chối ({unreadNotifs.length} chưa đọc)
+                    </span>
+                    {userNotifications.slice(0, 6).map(n => (
+                      <div
+                        key={n.id}
+                        onClick={() => markNotificationAsRead && markNotificationAsRead(n.id)}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: '8px',
+                          backgroundColor: n.isRead ? 'rgba(255,255,255,0.03)' : 'rgba(239, 68, 68, 0.12)',
+                          border: n.isRead ? '1px solid var(--color-border)' : '1px solid rgba(239, 68, 68, 0.35)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '4px',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <AlertTriangle size={14} color="#ef4444" style={{ flexShrink: 0 }} />
+                            <span style={{ fontSize: '0.82rem', fontWeight: '700', color: n.isRead ? 'var(--color-text-main)' : '#fca5a5' }}>
+                              {n.title || `Tài liệu ${n.documentNumber || n.documentCode} bị từ chối`}
+                            </span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteNotification && deleteNotification(n.id); }}
+                            title="Xóa thông báo này"
+                            style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: '2px' }}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', paddingLeft: '20px' }}>
+                          <strong>Lý do:</strong> <span style={{ color: '#fca5a5' }}>{n.reason}</span>
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#94a3b8', paddingLeft: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
+                          <span>{n.senderName ? `Duyệt bởi: ${n.senderName}` : ''}</span>
+                          <span>{formatNotiDate(n.createdAt)}</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ));
-              })()}
+                )}
+
+                {/* ── TÀI LIỆU MỚI ĐĂNG TẢI ── */}
+                {(() => {
+                  const unreadDocs = (documents || [])
+                    .filter(d => !d.isDeleted && (isDocNew ? isDocNew(d.id) : d.isNew))
+                    .slice(0, 5);
+
+                  if (unreadDocs.length === 0 && (!userNotifications || userNotifications.length === 0)) {
+                    return (
+                      <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', textAlign: 'center', padding: '1.5rem 0' }}>
+                        Tất cả thông báo đã đọc ✓
+                      </p>
+                    );
+                  }
+
+                  if (unreadDocs.length === 0) return null;
+
+                  return (
+                    <div>
+                      <span style={{ fontSize: '0.72rem', fontWeight: '700', textTransform: 'uppercase', color: 'var(--color-primary)', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>
+                        Tài liệu mới ({unreadDocs.length})
+                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {unreadDocs.map(doc => (
+                          <div key={doc.id} style={{ display: 'flex', gap: '10px', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-bg-surface-hover)' }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: 'var(--color-primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', flexShrink: 0 }}>
+                              <FileText size={15} />
+                            </div>
+                            <div>
+                              <p style={{ fontSize: '0.82rem', margin: '0', color: 'var(--color-text-main)' }}>
+                                <span style={{ fontWeight: '600' }}>{doc.uploader || doc.createdByName}</span> vừa tải: <strong>{doc.documentNumber}</strong>
+                              </p>
+                              <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>Mã: {doc.documentCode}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
               </div>
             </div>
           )}
@@ -359,7 +482,7 @@ const Header = ({ currentView, onOpenForm, onNavigate, onGoBack, onGoHome, onSea
               <div style={{ backgroundColor: 'var(--color-bg-surface-hover)', borderRadius: '24px 24px 0 0', padding: '8px 0 0' }}>
                 {/* Toggle role (debug, admin only) */}
                 {userRole === ROLES.ADMIN && (
-                  <div onClick={() => { toggleRole(); setShowUserMenu(false); }} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 24px', cursor: 'pointer', borderBottom: '1px solid var(--color-border)' }}>
+                  <div onClick={() => { if (typeof toggleRole === 'function') toggleRole(); setShowUserMenu(false); }} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 24px', cursor: 'pointer', borderBottom: '1px solid var(--color-border)' }}>
                     <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: '#ea4335', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold', fontSize: '1.2rem' }}>U</div>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                       <span style={{ fontSize: '0.875rem', fontWeight: '500', color: 'var(--color-text-main)' }}>Xem giao diện User</span>

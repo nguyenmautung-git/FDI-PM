@@ -9,7 +9,7 @@ import { COLLECTIONS, ROLES } from '../constants';
 import { isDocRelatedToProject } from '../utils/projectMatcher';
 
 const ALL_ADMIN_PERMS = {
-  view_docs: true,  add_docs: true,  edit_docs: true,
+  view_docs: true,  add_docs: true,  edit_docs: true,  approve_docs: true,
   view_steps: true, add_steps: true, edit_steps: true, reorder: true, upload_att: true,
   view_bidding: true, edit_bidding: true, view_contractor: true, edit_contractor: true,
   view_acceptance: true, edit_acceptance: true, view_payment: true, update_payment: true,
@@ -20,7 +20,7 @@ const ALL_ADMIN_PERMS = {
 const DEFAULT_ROLE_PERMS = {
   'Admin': ALL_ADMIN_PERMS,
   'Giám đốc DA': {
-    view_docs: true,  add_docs: true,  edit_docs: true,
+    view_docs: true,  add_docs: true,  edit_docs: true,  approve_docs: true,
     view_steps: true, add_steps: true, edit_steps: true, reorder: true, upload_att: true,
     view_bidding: true, edit_bidding: true, view_contractor: true, edit_contractor: true,
     view_acceptance: true, edit_acceptance: true, view_payment: true, update_payment: true,
@@ -28,7 +28,7 @@ const DEFAULT_ROLE_PERMS = {
     manage_members: false, manage_partners: false, system_settings: false,
   },
   'Chuyên viên': {
-    view_docs: true,  add_docs: true,  edit_docs: false,
+    view_docs: true,  add_docs: true,  edit_docs: false, approve_docs: false,
     view_steps: true, add_steps: true, edit_steps: false, reorder: false, upload_att: true,
     view_bidding: true, edit_bidding: false, view_contractor: true, edit_contractor: true,
     view_acceptance: true, edit_acceptance: false, view_payment: true, update_payment: false,
@@ -36,7 +36,7 @@ const DEFAULT_ROLE_PERMS = {
     manage_members: false, manage_partners: false, system_settings: false,
   },
   'Thư ký DA': {
-    view_docs: true,  add_docs: false, edit_docs: false,
+    view_docs: true,  add_docs: false, edit_docs: false, approve_docs: false,
     view_steps: true, add_steps: false, edit_steps: false, reorder: false, upload_att: false,
     view_bidding: true, edit_bidding: false, view_contractor: true, edit_contractor: false,
     view_acceptance: true, edit_acceptance: false, view_payment: true, update_payment: false,
@@ -122,6 +122,7 @@ export const DocumentProvider = ({ children, currentUser }) => {
   const [acceptanceSteps, setAcceptanceSteps] = useState([]);
   const [invitations, setInvitations] = useState([]);
   const [atldIssues, setAtldIssues] = useState([]);
+  const [userNotifications, setUserNotifications] = useState([]);
   // ── Lazy subscription flag ─────────────────────────────────────────────
   const [lazyEnabled, setLazyEnabled] = useState(false);
   /**
@@ -281,6 +282,62 @@ export const DocumentProvider = ({ children, currentUser }) => {
     return unsub;
   }, [currentUser?.uid]);
 
+  // ── Lắng nghe thông báo cá nhân (Web app & Mobile app) ──────────────────
+  useEffect(() => {
+    if (!currentUser?.email) {
+      setUserNotifications([]);
+      return;
+    }
+    const myEmail = (currentUser.email || '').toLowerCase().trim();
+    const q = query(
+      collection(db, 'userNotifications'),
+      where('recipientEmail', '==', myEmail)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => {
+        const tA = a.createdAt?.toDate?.() ? a.createdAt.toDate().getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const tB = b.createdAt?.toDate?.() ? b.createdAt.toDate().getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return tB - tA;
+      });
+      setUserNotifications(list);
+    }, (err) => {
+      console.warn('[Notifications] Lỗi khi nhận thông báo:', err.message);
+    });
+
+    return () => unsub();
+  }, [currentUser?.email]);
+
+  const markNotificationAsRead = async (id) => {
+    try {
+      await updateDoc(doc(db, 'userNotifications', id), { isRead: true });
+    } catch (e) {
+      console.warn('Lỗi đánh dấu thông báo đã đọc:', e.message);
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    try {
+      const unread = userNotifications.filter(n => !n.isRead);
+      if (unread.length === 0) return;
+      const batch = writeBatch(db);
+      unread.forEach(n => {
+        batch.update(doc(db, 'userNotifications', n.id), { isRead: true });
+      });
+      await batch.commit();
+    } catch (e) {
+      console.warn('Lỗi đánh dấu tất cả thông báo đã đọc:', e.message);
+    }
+  };
+
+  const deleteNotification = async (id) => {
+    try {
+      await deleteDoc(doc(db, 'userNotifications', id));
+    } catch (e) {
+      console.warn('Lỗi xóa thông báo:', e.message);
+    }
+  };
+
   // ── Nhắc nhở tài liệu sắp hết hiệu lực (30 ngày) ────────────────────────────────
   useEffect(() => {
     if (documents.length === 0) return;
@@ -304,6 +361,33 @@ export const DocumentProvider = ({ children, currentUser }) => {
   // Chỉ chạy 1 lần sau khi documents load xong
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documents.length > 0 ? 'loaded' : 'empty']);
+
+  // ── Hàm hỗ trợ: lấy storage path từ URL ────────────────────────────────────────────────────────
+  const deleteStorageFile = async (url) => {
+    try {
+      const match = url?.match(/\/o\/(.+?)(\?|$)/);
+      if (!match) return;
+      const path = decodeURIComponent(match[1]);
+      await deleteObject(storageRef(storage, path));
+    } catch (e) {
+      console.warn('[Storage] Không thể xóa file:', e.message);
+    }
+  };
+
+  // ── Audit log ────────────────────────────────────────────────────────────────────────────────
+  const logAudit = async (action, details = {}) => {
+    try {
+      await addDoc(collection(db, 'auditLogs'), {
+        action,
+        userId:    currentUser?.uid   || 'unknown',
+        userName:  currentUser?.displayName || currentUser?.email || 'unknown',
+        timestamp: serverTimestamp(),
+        ...details,
+      });
+    } catch (e) {
+      console.warn('[Audit] Không thể ghi log:', e.message);
+    }
+  };
 
   // ── Auto-purge: xóa vĩnh viễn các tài liệu đã xóa mềm > 30 ngày ──────────
   useEffect(() => {
@@ -348,40 +432,6 @@ export const DocumentProvider = ({ children, currentUser }) => {
     });
     return Array.from(agencySet).sort((a, b) => a.localeCompare(b, 'vi'));
   }, [partners, documents]);
-
-  // ── Tự động đồng bộ các Cơ quan ban hành từ văn bản sang danh sách Đối tác (Partners) ──
-  useEffect(() => {
-    if (documents.length === 0) return;
-    const existingPartnerNames = new Set(
-      (partners || []).map(p => (p.name || '').trim().toLowerCase())
-    );
-
-    const missingAgencies = new Set();
-    documents.forEach(d => {
-      if (d.issuingAgency) {
-        const name = d.issuingAgency.trim();
-        if (name && !existingPartnerNames.has(name.toLowerCase())) {
-          missingAgencies.add(name);
-        }
-      }
-    });
-
-    if (missingAgencies.size > 0) {
-      missingAgencies.forEach(async (agencyName) => {
-        try {
-          await addDoc(collection(db, COLLECTIONS.PARTNERS), {
-            name: agencyName,
-            shortName: agencyName,
-            type: ['Cơ quan ban hành'],
-            locked: false,
-            createdAt: new Date().toISOString()
-          });
-        } catch (err) {
-          console.error("[SyncAgencies] Lỗi khi tự động thêm đối tác:", err);
-        }
-      });
-    }
-  }, [documents, partners]);
 
   const ensurePartnerExists = async (agencyName) => {
     if (!agencyName || !agencyName.trim()) return;
@@ -555,7 +605,6 @@ export const DocumentProvider = ({ children, currentUser }) => {
     seedAtld();
 
     return () => {
-      unsubscribePartners();
       unsubscribeBidding();
       unsubscribeLegal();
       unsubscribeSchedule();
@@ -569,10 +618,14 @@ export const DocumentProvider = ({ children, currentUser }) => {
 
   // Đồng bộ userRole từ member document của người đang đăng nhập
   useEffect(() => {
-    if (currentUser && members.length > 0) {
+    if (currentUser) {
       const userEmail = (currentUser.email || '').toLowerCase().trim();
       const member = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
-      if (member && member.role) setUserRole(member.role);
+      if (member && member.role) {
+        setUserRole(member.role);
+      } else if (userEmail === 'tungnm35@fpt.com') {
+        setUserRole('Admin');
+      }
     }
   }, [members, currentUser]);
 
@@ -622,32 +675,6 @@ export const DocumentProvider = ({ children, currentUser }) => {
   const deleteDocumentType = (id) => deleteListItem('documentTypes', id);
   const editDocumentType = (id, newName) => editListItem('documentTypes', id, newName);
 
-  // ── Hạm hỗ trợ: lấy storage path từ URL ────────────────────────────────────────────────────────
-  const deleteStorageFile = async (url) => {
-    try {
-      const match = url?.match(/\/o\/(.+?)(\?|$)/);
-      if (!match) return;
-      const path = decodeURIComponent(match[1]);
-      await deleteObject(storageRef(storage, path));
-    } catch (e) {
-      console.warn('[Storage] Không thể xóa file:', e.message);
-    }
-  };
-
-  // ── Audit log ────────────────────────────────────────────────────────────────────────────────
-  const logAudit = async (action, details = {}) => {
-    try {
-      await addDoc(collection(db, 'auditLogs'), {
-        action,           // 'add_document' | 'edit_document' | 'delete_document' | 'restore_document' | 'download_file' | 'mark_read'
-        userId:    currentUser?.uid   || 'unknown',
-        userName:  currentUser?.displayName || currentUser?.email || 'unknown',
-        timestamp: serverTimestamp(),
-        ...details,
-      });
-    } catch (e) {
-      console.warn('[Audit] Không thể ghi log:', e.message);
-    }
-  };
 
   const addDocument = async (newDoc) => {
     try {
@@ -714,6 +741,80 @@ export const DocumentProvider = ({ children, currentUser }) => {
       logAudit('restore_document', { documentId: id, documentNumber: target?.documentNumber });
     } catch (error) {
       console.error("Lỗi khi khôi phục tài liệu: ", error);
+      throw error;
+    }
+  };
+
+  // ── Phê duyệt đăng tải tài liệu (Công khai tài liệu) ──
+  const approveDocument = async (id) => {
+    try {
+      const userEmail = currentUser?.email || 'Admin';
+      const member = members.find(m => (m.email || '').toLowerCase().trim() === userEmail.toLowerCase().trim());
+      const userName = currentUser?.displayName || member?.name || userEmail;
+
+      await updateDoc(doc(db, 'documents', id), {
+        status: 'approved',
+        approvalStatus: 'approved',
+        approvedBy: userEmail,
+        approvedByName: userName,
+        approvedAt: new Date().toISOString()
+      });
+      logAudit('approve_document', { documentId: id, approvedBy: userEmail, approvedByName: userName });
+    } catch (error) {
+      console.error("Lỗi khi phê duyệt tài liệu: ", error);
+      throw error;
+    }
+  };
+
+  // ── Từ chối đăng tải tài liệu -> Xóa tài liệu khỏi hệ thống và thông báo ──
+  const rejectDocument = async (id, reason = '', recipientEmail = '') => {
+    try {
+      const target = documents.find(d => d.id === id);
+      const userEmail = currentUser?.email || 'Admin';
+      const member = members.find(m => (m.email || '').toLowerCase().trim() === userEmail.toLowerCase().trim());
+      const userName = currentUser?.displayName || member?.name || userEmail;
+      const targetRecipient = target?.createdByEmail || recipientEmail;
+
+      // 1. Lưu thông báo vào userNotifications trong Firestore
+      if (targetRecipient) {
+        try {
+          await addDoc(collection(db, 'userNotifications'), {
+            recipientEmail: targetRecipient.toLowerCase().trim(),
+            senderEmail: userEmail,
+            senderName: userName,
+            type: 'document_rejected',
+            title: `Tài liệu ${target?.documentNumber || target?.documentCode || 'văn bản'} bị từ chối phê duyệt`,
+            documentNumber: target?.documentNumber || '',
+            documentCode: target?.documentCode || '',
+            documentSummary: target?.summary || '',
+            reason: reason || 'Tài liệu không phù hợp',
+            createdAt: serverTimestamp(),
+            isRead: false
+          });
+        } catch (notifErr) {
+          console.warn('[RejectDoc] Không thể lưu thông báo:', notifErr.message);
+        }
+      }
+
+      // 2. Xóa tệp đính kèm trên Storage
+      if (target?.attachments && target.attachments.length > 0) {
+        await Promise.all((target.attachments || []).map(att => deleteStorageFile(att.url)));
+      }
+
+      // 3. Xóa document khỏi Firestore
+      await deleteDoc(doc(db, 'documents', id));
+
+      // 4. Ghi Audit Log
+      logAudit('reject_document', {
+        documentId: id,
+        documentNumber: target?.documentNumber,
+        documentCode: target?.documentCode,
+        reason,
+        uploaderEmail: targetRecipient,
+        rejectedBy: userEmail
+      });
+    } catch (error) {
+      console.error("Lỗi khi từ chối tài liệu: ", error);
       throw error;
     }
   };
@@ -842,6 +943,64 @@ export const DocumentProvider = ({ children, currentUser }) => {
       await deleteDoc(doc(db, 'partners', id));
     } catch (error) {
       console.error("Lỗi khi xóa đối tác: ", error);
+      throw error;
+    }
+  };
+
+  // ── Dọn dẹp gom tất cả đối tác trùng lặp trong Firestore về 1 bản ghi duy nhất ──
+  const cleanDuplicatePartners = async () => {
+    try {
+      const snap = await getDocs(collection(db, COLLECTIONS.PARTNERS));
+      const seen = new Map();
+      const duplicateDocIds = [];
+
+      snap.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        const normName = (data.name || data.shortName || '').trim().toLowerCase();
+        if (!normName) return;
+
+        // Điểm đánh giá mức độ đầy đủ thông tin của bản ghi
+        const score = (data.logo ? 6 : 0) +
+                      (data.taxCode ? 4 : 0) +
+                      (data.phone ? 2 : 0) +
+                      (data.email ? 2 : 0) +
+                      (data.representative ? 2 : 0) +
+                      (data.address ? 1 : 0) +
+                      (data.rating ? 1 : 0);
+
+        if (seen.has(normName)) {
+          const existing = seen.get(normName);
+          if (score > existing.score) {
+            // Bản ghi hiện tại đầy đủ hơn bản ghi trước -> Xóa bản ghi trước, giữ bản ghi hiện tại
+            duplicateDocIds.push(existing.id);
+            seen.set(normName, { id: docSnap.id, score, data });
+          } else {
+            // Bản ghi trước đầy đủ hơn -> Xóa bản ghi hiện tại
+            duplicateDocIds.push(docSnap.id);
+          }
+        } else {
+          seen.set(normName, { id: docSnap.id, score, data });
+        }
+      });
+
+      if (duplicateDocIds.length === 0) {
+        return { count: 0, remaining: seen.size };
+      }
+
+      // Xóa theo batch 450 documents (giới hạn tối đa của Firestore writeBatch là 500)
+      const BATCH_SIZE = 450;
+      for (let i = 0; i < duplicateDocIds.length; i += BATCH_SIZE) {
+        const chunk = duplicateDocIds.slice(i, i + BATCH_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach(id => {
+          batch.delete(doc(db, COLLECTIONS.PARTNERS, id));
+        });
+        await batch.commit();
+      }
+
+      return { count: duplicateDocIds.length, remaining: seen.size };
+    } catch (error) {
+      console.error("Lỗi khi dọn dẹp đối tác trùng lặp: ", error);
       throw error;
     }
   };
@@ -1048,6 +1207,126 @@ export const DocumentProvider = ({ children, currentUser }) => {
     return userCredential.user;
   };
 
+  // ==== Permission Helpers (Phải khai báo TRƯỚC filteredProjects & filteredDocuments để tránh TDZ) ====
+  const checkPermission = useCallback((projectId, permissionKey) => {
+    if (!currentUser) return false;
+
+    const userEmail = (currentUser.email || '').toLowerCase().trim();
+    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
+
+    const memberRole = currentMember?.role || userRole;
+    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
+
+    // 1. Nếu có projectId, ưu tiên vai trò cụ thể được gán trong dự án đó
+    if (projectId && currentMember) {
+      const project = projects.find(p => p.id === projectId);
+      if (project) {
+        const projectMember = project.projectMembers?.find(
+          pm => pm.memberId?.toString() === currentMember.id?.toString()
+        );
+        const pRole = projectMember?.role;
+        if (pRole) {
+          if (pRole === 'Admin' || pRole === 'Quản trị viên') return true;
+          if (projectRoleMatrix[pRole] && projectRoleMatrix[pRole][permissionKey] !== undefined) {
+            return !!projectRoleMatrix[pRole][permissionKey];
+          }
+        }
+      }
+    }
+
+    // 2. Nếu không có vai trò riêng trong dự án, áp dụng vai trò chung của User từ Ma trận vai trò
+    if (memberRole && projectRoleMatrix[memberRole] && projectRoleMatrix[memberRole][permissionKey] !== undefined) {
+      return !!projectRoleMatrix[memberRole][permissionKey];
+    }
+
+    return false;
+  }, [projects, members, currentUser, userRole, projectRoleMatrix]);
+
+  const checkDocumentPermission = useCallback((docObj, actionKey) => {
+    if (!currentUser) return false;
+
+    const userEmail = (currentUser.email || '').toLowerCase().trim();
+    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
+
+    const memberRole = currentMember?.role || userRole;
+    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
+
+    if (!docObj) return false;
+
+    if (!docObj.relatedProjects || docObj.relatedProjects.length === 0) {
+      if (memberRole && projectRoleMatrix[memberRole]?.[actionKey] !== undefined) {
+        return !!projectRoleMatrix[memberRole][actionKey];
+      }
+      return actionKey.startsWith('view_');
+    }
+
+    return docObj.relatedProjects.some(projName => {
+      const proj = projects.find(p => isDocRelatedToProject({ relatedProjects: [projName] }, p));
+      if (!proj) return checkPermission(null, actionKey);
+      return checkPermission(proj.id, actionKey);
+    });
+  }, [projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
+
+  const canAddDocument = useCallback(() => {
+    if (!currentUser) return false;
+
+    const userEmail = (currentUser.email || '').toLowerCase().trim();
+    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
+
+    const memberRole = currentMember?.role || userRole;
+    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
+
+    if (memberRole && projectRoleMatrix[memberRole]?.add_docs) return true;
+
+    return projects.some(p => checkPermission(p.id, 'add_docs'));
+  }, [projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
+
+  const canViewDefects = useCallback(() => {
+    if (!currentUser) return false;
+
+    const userEmail = (currentUser.email || '').toLowerCase().trim();
+    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
+
+    const memberRole = currentMember?.role || userRole;
+    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
+
+    if (memberRole && projectRoleMatrix[memberRole]?.view_defects) return true;
+
+    return projects.some(p => checkPermission(p.id, 'view_defects'));
+  }, [projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
+
+  const canEditDefects = useCallback(() => {
+    if (!currentUser) return false;
+
+    const userEmail = (currentUser.email || '').toLowerCase().trim();
+    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
+
+    const memberRole = currentMember?.role || userRole;
+    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
+
+    if (memberRole && projectRoleMatrix[memberRole]?.edit_defects) return true;
+
+    return projects.some(p => checkPermission(p.id, 'edit_defects'));
+  }, [projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
+
+  const canApproveDocs = useCallback((projectId = null) => {
+    if (!currentUser) return false;
+
+    const userEmail = (currentUser.email || '').toLowerCase().trim();
+    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
+
+    const memberRole = currentMember?.role || userRole;
+    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
+
+    if (projectId) {
+      return checkPermission(projectId, 'approve_docs');
+    }
+
+    if (memberRole && projectRoleMatrix[memberRole]?.approve_docs) return true;
+
+    return projects.some(p => checkPermission(p.id, 'approve_docs'));
+  }, [projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
+
   // Lọc danh sách dự án dựa theo email của currentUser (Admins xem toàn bộ)
   const filteredProjects = useMemo(() => {
     if (!currentUser || !members.length) return [];
@@ -1061,22 +1340,40 @@ export const DocumentProvider = ({ children, currentUser }) => {
     });
   }, [projects, members, currentUser, userRole]);
 
-  // Lọc danh sách tài liệu dựa theo dự án mà user là thành viên (Admins xem toàn bộ)
+  // Lọc danh sách tài liệu dựa theo dự án mà user là thành viên & trạng thái duyệt đăng tải
   const filteredDocuments = useMemo(() => {
     if (!currentUser || !members.length) return [];
-    const currentMember = members.find(m => m.email === currentUser.email);
+    const userEmail = (currentUser.email || '').toLowerCase().trim();
+    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
     const isAdmin = currentMember?.role === ROLES.ADMIN || userRole === ROLES.ADMIN;
-    if (isAdmin) return documents;
-
+    
     // Lấy danh sách dự án mà user là thành viên
-    const myProjects = projects.filter(p => p.projectMembers?.some(pm => pm.memberId?.toString() === currentMember?.id?.toString()));
+    const myProjects = isAdmin
+      ? projects
+      : projects.filter(p => p.projectMembers?.some(pm => pm.memberId?.toString() === currentMember?.id?.toString()));
+
+    const canApproveAny = isAdmin || (currentMember?.role && projectRoleMatrix[currentMember.role]?.approve_docs) || projects.some(p => checkPermission(p.id, 'approve_docs'));
 
     return documents.filter(doc => {
-      // Nếu tài liệu không liên quan đến dự án nào, bất kỳ ai cũng xem được
-      if (!doc.relatedProjects || doc.relatedProjects.length === 0) return true;
-      return myProjects.some(p => isDocRelatedToProject(doc, p));
+      // 1. Nếu tài liệu không liên quan đến dự án nào, bất kỳ ai cũng xem được
+      const hasProjectAccess = isAdmin ||
+        (!doc.relatedProjects || doc.relatedProjects.length === 0) ||
+        myProjects.some(p => isDocRelatedToProject(doc, p));
+
+      if (!hasProjectAccess) return false;
+
+      // 2. Kiểm tra trạng thái phê duyệt:
+      // - Đã duyệt (status === 'approved' hoặc không có status - legacy) -> Cho phép xem
+      // - Chờ phê duyệt (status === 'pending_approval'): Chỉ hiển thị cho Admin, Người có quyền duyệt, hoặc Người tải lên
+      const isPending = doc.status === 'pending_approval' || doc.approvalStatus === 'pending';
+      if (!isPending) return true;
+
+      const isMyUpload = (doc.createdByEmail && doc.createdByEmail.toLowerCase().trim() === userEmail) ||
+                         (doc.uploader && currentMember?.name && doc.uploader.toLowerCase().trim() === currentMember.name.toLowerCase().trim());
+
+      return canApproveAny || isMyUpload;
     });
-  }, [documents, projects, members, currentUser, userRole]);
+  }, [documents, projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
 
   const saveProjectRoleMatrix = async (matrix) => {
     try {
@@ -1190,116 +1487,15 @@ export const DocumentProvider = ({ children, currentUser }) => {
     }
   };
 
-  const checkPermission = useCallback((projectId, permissionKey) => {
-    if (!currentUser) return false;
-
-    const userEmail = (currentUser.email || '').toLowerCase().trim();
-    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
-
-    const memberRole = currentMember?.role || userRole;
-    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
-
-    // 1. Nếu có projectId, ưu tiên vai trò cụ thể được gán trong dự án đó
-    if (projectId && currentMember) {
-      const project = projects.find(p => p.id === projectId);
-      if (project) {
-        const projectMember = project.projectMembers?.find(
-          pm => pm.memberId?.toString() === currentMember.id?.toString()
-        );
-        const pRole = projectMember?.role;
-        if (pRole) {
-          if (pRole === 'Admin' || pRole === 'Quản trị viên') return true;
-          if (projectRoleMatrix[pRole] && projectRoleMatrix[pRole][permissionKey] !== undefined) {
-            return !!projectRoleMatrix[pRole][permissionKey];
-          }
-        }
-      }
-    }
-
-    // 2. Nếu không có vai trò riêng trong dự án, áp dụng vai trò chung của User từ Ma trận vai trò
-    if (memberRole && projectRoleMatrix[memberRole] && projectRoleMatrix[memberRole][permissionKey] !== undefined) {
-      return !!projectRoleMatrix[memberRole][permissionKey];
-    }
-
-    return false;
-  }, [projects, members, currentUser, userRole, projectRoleMatrix]);
-
-  const checkDocumentPermission = useCallback((docObj, actionKey) => {
-    if (!currentUser) return false;
-
-    const userEmail = (currentUser.email || '').toLowerCase().trim();
-    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
-
-    const memberRole = currentMember?.role || userRole;
-    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
-
-    if (!docObj) return false;
-
-    if (!docObj.relatedProjects || docObj.relatedProjects.length === 0) {
-      if (memberRole && projectRoleMatrix[memberRole]?.[actionKey] !== undefined) {
-        return !!projectRoleMatrix[memberRole][actionKey];
-      }
-      return actionKey.startsWith('view_');
-    }
-
-    return docObj.relatedProjects.some(projName => {
-      const proj = projects.find(p => isDocRelatedToProject({ relatedProjects: [projName] }, p));
-      if (!proj) return checkPermission(null, actionKey);
-      return checkPermission(proj.id, actionKey);
-    });
-  }, [projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
-
-  const canAddDocument = useCallback(() => {
-    if (!currentUser) return false;
-
-    const userEmail = (currentUser.email || '').toLowerCase().trim();
-    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
-
-    const memberRole = currentMember?.role || userRole;
-    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
-
-    if (memberRole && projectRoleMatrix[memberRole]?.add_docs) return true;
-
-    return projects.some(p => checkPermission(p.id, 'add_docs'));
-  }, [projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
-
-  const canViewDefects = useCallback(() => {
-    if (!currentUser) return false;
-
-    const userEmail = (currentUser.email || '').toLowerCase().trim();
-    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
-
-    const memberRole = currentMember?.role || userRole;
-    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
-
-    if (memberRole && projectRoleMatrix[memberRole]?.view_defects) return true;
-
-    return projects.some(p => checkPermission(p.id, 'view_defects'));
-  }, [projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
-
-  const canEditDefects = useCallback(() => {
-    if (!currentUser) return false;
-
-    const userEmail = (currentUser.email || '').toLowerCase().trim();
-    const currentMember = members.find(m => (m.email || '').toLowerCase().trim() === userEmail);
-
-    const memberRole = currentMember?.role || userRole;
-    if (memberRole === ROLES.ADMIN || memberRole === 'Admin') return true;
-
-    if (memberRole && projectRoleMatrix[memberRole]?.edit_defects) return true;
-
-    return projects.some(p => checkPermission(p.id, 'edit_defects'));
-  }, [projects, members, currentUser, userRole, checkPermission, projectRoleMatrix]);
-
   return (
     <DocumentContext.Provider value={{
       documents: filteredDocuments,
       allDocuments: documents,
       addDocument, editDocument, deleteDocument, permanentDeleteDocument, restoreDocument,
+      approveDocument, rejectDocument,
       markAsRead, getNewCount, isDocNew, logDownload,
       userRole,
-      // toggleRole chỉ expose trong dev — production build tree-shake nó ra
-      ...(import.meta.env.DEV ? { toggleRole } : {}),
+      toggleRole,
       documentTypes: globalLists.documentTypes, addDocumentType, deleteDocumentType, editDocumentType,
       globalLists, addListItem, editListItem, deleteListItem,
       projects: filteredProjects,
@@ -1307,7 +1503,7 @@ export const DocumentProvider = ({ children, currentUser }) => {
       addProject, editProject, deleteProject,
       members, addMember, editMember, deleteMember,
       // Lazy collections (rỗng cho đến khi enableLazy() được gọi lần đầu)
-      partners, addPartner, editPartner, deletePartner, uniqueAgencies,
+      partners, addPartner, editPartner, deletePartner, cleanDuplicatePartners, uniqueAgencies,
       biddingPackages, addBiddingPackage, editBiddingPackage, deleteBiddingPackage, reorderBiddingPackages,
       legalSteps, addLegalStep, updateLegalStep, deleteLegalStep,
       scheduleSteps, addScheduleStep, updateScheduleStep, deleteScheduleStep,
@@ -1319,7 +1515,11 @@ export const DocumentProvider = ({ children, currentUser }) => {
       projectRoleMatrix, saveProjectRoleMatrix,
       defectTabs, addDefectTab, editDefectTab, deleteDefectTab,
       defectLibrary, addDefectError, editDefectError, deleteDefectError,
-      checkPermission, checkDocumentPermission, canAddDocument, canViewDefects, canEditDefects,
+      userNotifications,
+      markNotificationAsRead,
+      markAllNotificationsAsRead,
+      deleteNotification,
+      checkPermission, checkDocumentPermission, canAddDocument, canViewDefects, canEditDefects, canApproveDocs,
     }}>
       {children}
     </DocumentContext.Provider>
