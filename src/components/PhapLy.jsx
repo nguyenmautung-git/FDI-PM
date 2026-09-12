@@ -1,6 +1,7 @@
 import React, { useState, useContext, useRef, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import ReactDOM from 'react-dom';
+import Select from 'react-select';
 import { DocumentContext } from '../context/DocumentContext';
 import { useToast, useConfirm } from '../context/UIContext';
 import { storage, db } from '../firebase';
@@ -1047,6 +1048,103 @@ const DocumentPickerModal = ({ project, documents = [], initialSelectedIds = [],
   );
 };
 
+const removeVietnameseTones = (str) => {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .trim();
+};
+
+const filterPartnerOption = (candidate, input) => {
+  if (!input) return true;
+  const label = candidate.label || '';
+  const search = input.toLowerCase().trim();
+  const searchNoTone = removeVietnameseTones(search);
+  const labelLower = label.toLowerCase();
+  const labelNoTone = removeVietnameseTones(label);
+
+  return labelLower.includes(search) || labelNoTone.includes(searchNoTone);
+};
+
+const partnerSelectStyles = {
+  control: (base, state) => ({
+    ...base,
+    minHeight: '38px',
+    height: '38px',
+    borderRadius: '8px',
+    borderColor: state.isFocused ? 'var(--color-primary, #6366f1)' : 'var(--color-border, #334155)',
+    backgroundColor: 'var(--color-bg-body, #0f172a)',
+    boxShadow: state.isFocused ? '0 0 0 1px var(--color-primary, #6366f1)' : 'none',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    '&:hover': {
+      borderColor: 'var(--color-primary, #6366f1)'
+    }
+  }),
+  valueContainer: (base) => ({
+    ...base,
+    padding: '0 10px',
+    height: '38px'
+  }),
+  input: (base) => ({
+    ...base,
+    margin: 0,
+    padding: 0,
+    color: 'var(--color-text-main, #f8fafc)',
+    fontSize: '0.85rem'
+  }),
+  singleValue: (base) => ({
+    ...base,
+    color: 'var(--color-text-main, #f8fafc)',
+    fontSize: '0.85rem'
+  }),
+  placeholder: (base) => ({
+    ...base,
+    color: 'var(--color-text-muted, #94a3b8)',
+    fontSize: '0.85rem'
+  }),
+  menuPortal: (base) => ({
+    ...base,
+    zIndex: 99999
+  }),
+  menu: (base) => ({
+    ...base,
+    backgroundColor: '#1e293b',
+    border: '1px solid var(--color-border, #334155)',
+    borderRadius: '8px',
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
+    zIndex: 99999,
+    overflow: 'hidden'
+  }),
+  menuList: (base) => ({
+    ...base,
+    maxHeight: '260px',
+    padding: '4px'
+  }),
+  clearIndicator: (base) => ({
+    ...base,
+    padding: '4px',
+    cursor: 'pointer',
+    color: 'var(--color-text-muted, #94a3b8)',
+    '&:hover': {
+      color: '#ef4444'
+    }
+  }),
+  dropdownIndicator: (base) => ({
+    ...base,
+    padding: '4px',
+    cursor: 'pointer',
+    color: 'var(--color-text-muted, #94a3b8)',
+    '&:hover': {
+      color: 'var(--color-primary, #6366f1)'
+    }
+  })
+};
+
 /* ─── Step Form Modal ─── */
 const StepFormModal = ({ project, editingStep, onClose, onSave, savedCount, partners, canUpload, documents = [] }) => {
   // documents được truyền từ PhapLy (nơi đã enableLazy và có đủ dữ liệu)
@@ -1103,6 +1201,48 @@ const StepFormModal = ({ project, editingStep, onClose, onSave, savedCount, part
         }
       : blankForm
   );
+
+  const partnerOptions = useMemo(() => {
+    if (!partners || !Array.isArray(partners)) {
+      return [{ value: 'Chưa xác định', label: 'Chưa xác định', isUnknown: true }];
+    }
+
+    const list = [...partners].filter(p => p && p.name && p.name.trim());
+    const hasUnknown = list.some(p => (p.name || '').trim().toLowerCase() === 'chưa xác định');
+
+    // Sắp xếp Alphabet tiếng Việt theo chuẩn 'vi', riêng "Chưa xác định" luôn đặt trên cùng
+    const sorted = list.sort((a, b) => {
+      const aName = (a.name || '').trim();
+      const bName = (b.name || '').trim();
+      const aIsUnknown = aName.toLowerCase() === 'chưa xác định';
+      const bIsUnknown = bName.toLowerCase() === 'chưa xác định';
+      if (aIsUnknown && !bIsUnknown) return -1;
+      if (!aIsUnknown && bIsUnknown) return 1;
+      return aName.localeCompare(bName, 'vi');
+    });
+
+    const options = sorted.map(p => ({
+      value: p.id || p.name,
+      label: p.name,
+      isUnknown: (p.name || '').trim().toLowerCase() === 'chưa xác định'
+    }));
+
+    if (!hasUnknown) {
+      options.unshift({
+        value: 'Chưa xác định',
+        label: 'Chưa xác định',
+        isUnknown: true
+      });
+    }
+
+    return options;
+  }, [partners]);
+
+  const selectedPartnerOption = useMemo(() => {
+    if (!form.implementingUnit) return null;
+    return partnerOptions.find(o => o.value === form.implementingUnit || o.label === form.implementingUnit)
+      || { value: form.implementingUnit, label: form.implementingUnit };
+  }, [form.implementingUnit, partnerOptions]);
 
   // Reset form khi savedCount tăng (chỉ khi đang thêm mới, không phải edit)
   React.useEffect(() => {
@@ -1219,12 +1359,59 @@ const StepFormModal = ({ project, editingStep, onClose, onSave, savedCount, part
             </div>
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Đơn vị thực hiện</label>
-              <select className="input-field" value={form.implementingUnit} onChange={e => setForm({ ...form, implementingUnit: e.target.value })}>
-                <option value="">-- Chọn đối tác --</option>
-                {partners?.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+              <Select
+                value={selectedPartnerOption}
+                onChange={opt => setForm({ ...form, implementingUnit: opt ? opt.value : '' })}
+                options={partnerOptions}
+                isClearable
+                isSearchable
+                filterOption={filterPartnerOption}
+                placeholder="-- Tìm hoặc chọn đối tác --"
+                noOptionsMessage={() => "Không tìm thấy đối tác phù hợp"}
+                menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+                menuPosition="fixed"
+                styles={partnerSelectStyles}
+                components={{
+                  Option: (props) => (
+                    <div
+                      ref={props.innerRef}
+                      {...props.innerProps}
+                      style={{
+                        padding: '8px 12px',
+                        backgroundColor: props.isSelected 
+                          ? 'var(--color-primary, #4f46e5)' 
+                          : props.isFocused 
+                            ? 'rgba(99, 102, 241, 0.15)' 
+                            : 'transparent',
+                        color: props.isSelected ? '#ffffff' : (props.data.isUnknown ? '#94a3b8' : 'var(--color-text-main, #f8fafc)'),
+                        cursor: 'pointer',
+                        fontSize: '0.84rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        borderBottom: props.data.isUnknown ? '1px solid var(--color-border, #334155)' : 'none',
+                        marginBottom: props.data.isUnknown ? '4px' : '0'
+                      }}
+                    >
+                      <span style={{ fontWeight: props.data.isUnknown ? '700' : '500', fontStyle: props.data.isUnknown ? 'italic' : 'normal' }}>
+                        {props.data.label}
+                      </span>
+                      {props.data.isUnknown && (
+                        <span style={{
+                          fontSize: '0.68rem',
+                          padding: '1px 6px',
+                          borderRadius: '4px',
+                          backgroundColor: 'rgba(148, 163, 184, 0.2)',
+                          color: '#cbd5e1',
+                          fontWeight: '600'
+                        }}>
+                          Mặc định
+                        </span>
+                      )}
+                    </div>
+                  )
+                }}
+              />
             </div>
           </div>
 
