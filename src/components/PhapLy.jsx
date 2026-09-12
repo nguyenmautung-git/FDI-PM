@@ -1179,7 +1179,7 @@ const StepFormModal = ({ project, editingStep, onClose, onSave, savedCount, part
     status: STEP_STATUS.PENDING,
     effectiveDate: '',
     targetDate: '',
-    implementingUnit: '',
+    implementingUnit: 'Chưa xác định',
     summary: '',
     phase: 'PHASE_1',
     order: 0,
@@ -1193,7 +1193,7 @@ const StepFormModal = ({ project, editingStep, onClose, onSave, savedCount, part
           status: editingStep.status || STEP_STATUS.PENDING,
           effectiveDate: editingStep.effectiveDate || editingStep.completedDate || '',
           targetDate: editingStep.targetDate || '',
-          implementingUnit: editingStep.implementingUnit || '',
+          implementingUnit: editingStep.implementingUnit || 'Chưa xác định',
           summary: editingStep.summary || editingStep.note || '',
           phase: editingStep.phase || 'PHASE_1',
           order: editingStep.order ?? 0,
@@ -1240,8 +1240,9 @@ const StepFormModal = ({ project, editingStep, onClose, onSave, savedCount, part
 
   const selectedPartnerOption = useMemo(() => {
     if (!form.implementingUnit) return null;
-    return partnerOptions.find(o => o.value === form.implementingUnit || o.label === form.implementingUnit)
-      || { value: form.implementingUnit, label: form.implementingUnit };
+    const val = form.implementingUnit.trim();
+    return partnerOptions.find(o => o.value === val || o.label === val || (o.isUnknown && val.toLowerCase() === 'chưa xác định'))
+      || { value: val, label: val };
   }, [form.implementingUnit, partnerOptions]);
 
   // Reset form khi savedCount tăng (chỉ khi đang thêm mới, không phải edit)

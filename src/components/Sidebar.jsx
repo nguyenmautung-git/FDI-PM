@@ -60,7 +60,7 @@ const Sidebar = ({ currentView, setCurrentView }) => {
           <NavItem icon={<HardHat size={20} style={{ flexShrink: 0 }} />} label="ATLĐ & VSMT" active={currentView === 'atld'} onClick={() => setCurrentView('atld')} isChild isCollapsed={isCollapsed} />
           <NavItem icon={<CheckSquare size={20} style={{ flexShrink: 0 }} />} label="Nghiệm thu - Thanh quyết toán" active={currentView === 'nghiemThu'} onClick={() => setCurrentView('nghiemThu')} isChild isCollapsed={isCollapsed} />
           <NavItem icon={<CreditCard size={20} style={{ flexShrink: 0 }} />} label="Thanh toán" active={currentView === 'payment'} onClick={() => setCurrentView('payment')} isChild isCollapsed={isCollapsed} />
-          {(userRole === ROLES.ADMIN || canViewDefects()) && (
+          {(userRole === ROLES.ADMIN || (typeof canViewDefects === 'function' && canViewDefects())) && (
             <NavItem icon={<AlertCircle size={20} style={{ flexShrink: 0 }} />} label="Danh mục lỗi" active={currentView === 'danhMucLoi'} onClick={() => setCurrentView('danhMucLoi')} isChild isCollapsed={isCollapsed} />
           )}
         </NavAccordion>
@@ -77,6 +77,36 @@ const Sidebar = ({ currentView, setCurrentView }) => {
 
       <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid var(--color-border)', width: '100%', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
         <NavItem icon={<HelpCircle size={20} style={{ flexShrink: 0 }} />} label="Trợ giúp" active={currentView === 'help'} onClick={() => setCurrentView('help')} isCollapsed={isCollapsed} />
+        
+        {!isCollapsed ? (
+          <div style={{
+            padding: '8px 10px 4px 10px',
+            fontSize: '0.68rem',
+            lineHeight: '1.4',
+            color: 'var(--color-text-muted)',
+            opacity: 0.75,
+            borderTop: '1px dashed var(--color-border)',
+            marginTop: '2px',
+            wordBreak: 'break-word',
+            userSelect: 'none'
+          }}>
+            Thiết kế và bản quyền: Kts. Nguyễn Mậu Tùng - SĐT: 0983032076
+          </div>
+        ) : (
+          <div
+            title="Thiết kế và bản quyền: Kts. Nguyễn Mậu Tùng - SĐT: 0983032076"
+            style={{
+              textAlign: 'center',
+              fontSize: '0.6rem',
+              color: 'var(--color-text-muted)',
+              opacity: 0.6,
+              cursor: 'help',
+              padding: '4px 0'
+            }}
+          >
+            © Kts. Tùng
+          </div>
+        )}
       </div>
     </aside>
   );
