@@ -9,13 +9,26 @@
 
 export const cleanStr = (s) => {
   if (!s) return '';
-  return String(s).trim().toLowerCase();
+  return String(s)
+    .trim()
+    .toLowerCase()
+    .normalize('NFC')
+    .replace(/oà/g, 'òa')
+    .replace(/oá/g, 'óa')
+    .replace(/oả/g, 'ỏa')
+    .replace(/oã/g, 'õa')
+    .replace(/oạ/g, 'ọa')
+    .replace(/uỳ/g, 'ùy')
+    .replace(/uý/g, 'úy')
+    .replace(/uỷ/g, 'ủy')
+    .replace(/uỹ/g, 'ũy')
+    .replace(/uỵ/g, 'ụy');
 };
 
 export const normalizeCode = (s) => {
   if (!s) return '';
   // Bỏ dấu gạch ngang, gạch dưới, khoảng trắng: "CNS-01" -> "cns01", "CNS 1" -> "cns1"
-  return String(s).toLowerCase().replace(/[-\s_]/g, '');
+  return cleanStr(s).replace(/[-\s_]/g, '');
 };
 
 /**
@@ -50,19 +63,29 @@ export const isDocRelatedToProject = (doc, project, originalProject = null) => {
     if (origName && (docPrjName === origName || origName.includes(docPrjName) || docPrjName.includes(origName))) return true;
     if (prjCode && docPrjName === prjCode) return true;
     if (prjCodeNorm && normalizeCode(docPrjName) === prjCodeNorm) return true;
+
+    // Khớp CNS qua doc.projectName
+    const docPrjNorm = normalizeCode(docPrjName);
+    const isDocCns = docPrjNorm.includes('cns1') || docPrjNorm.includes('cns01') || docPrjName.includes('công nghệ số 01') || docPrjName.includes('công nghệ số 1') || ((docPrjName.includes('tòa nhà công nghệ số') || docPrjName.includes('toà nhà công nghệ số')) && !docPrjName.includes('02') && !docPrjName.includes('03'));
+    const isPrjCns = prjCodeNorm.includes('cns1') || prjCodeNorm.includes('cns01') || prjName.includes('công nghệ số 01') || prjName.includes('công nghệ số 1') || prjCode.includes('cns-01') || prjCode.includes('cns-1') || prjName.includes('cns-1') || ((prjName.includes('tòa nhà công nghệ số') || prjName.includes('toà nhà công nghệ số')) && !prjName.includes('02') && !prjName.includes('03'));
+    if (isDocCns && isPrjCns) return true;
   }
 
-  // 2. Khớp qua mảng relatedProjects của document
+  // 2. Khớp qua mảng relatedProjects và keywords của document
   const rawList = doc.relatedProjects;
-  const relList = Array.isArray(rawList)
-    ? rawList
-    : (typeof rawList === 'string' && rawList.trim() ? [rawList] : []);
+  const rawKw = doc.keywords;
+  const kwList = Array.isArray(rawKw)
+    ? rawKw
+    : (typeof rawKw === 'string' && rawKw.trim() ? rawKw.split(',').map(s => s.trim()) : []);
+  const relList = [
+    ...(Array.isArray(rawList) ? rawList : (typeof rawList === 'string' && rawList.trim() ? [rawList] : [])),
+    ...kwList
+  ];
 
   for (const item of relList) {
     if (!item) continue;
     
-    // Nếu item là object { id, code, name }
-    let itemStr = '';
+    let itemStr;
     let itemId = '';
     let itemCode = '';
     if (typeof item === 'object') {
@@ -93,18 +116,27 @@ export const isDocRelatedToProject = (doc, project, originalProject = null) => {
     if (prjName.length > 5 && (itemStr.includes(prjName) || prjName.includes(itemStr))) return true;
     if (origName && origName.length > 5 && (itemStr.includes(origName) || origName.includes(itemStr))) return true;
 
-    // Quy tắc riêng cho các dự án CNS (Công nghệ số 01 / CNS1 / CNS-01)
+    // Quy tắc riêng cho các dự án CNS (Công nghệ số 01 / CNS1 / CNS-01 / Tòa nhà công nghệ số 01)
     const isCnsDoc = itemNorm.includes('cns1') || 
                      itemNorm.includes('cns01') || 
                      itemStr.includes('công nghệ số 01') || 
                      itemStr.includes('công nghệ số 1') || 
-                     (itemStr.includes('tòa nhà công nghệ số') && !itemStr.includes('02') && !itemStr.includes('03'));
+                     itemStr.includes('cns-01') ||
+                     itemStr.includes('cns-1') ||
+                     itemStr.includes('cns1') ||
+                     ((itemStr.includes('tòa nhà công nghệ số') || itemStr.includes('toà nhà công nghệ số')) && !itemStr.includes('02') && !itemStr.includes('03'));
 
     const isCnsProject = prjCodeNorm.includes('cns1') || 
                          prjCodeNorm.includes('cns01') || 
                          prjName.includes('công nghệ số 01') || 
                          prjName.includes('công nghệ số 1') || 
-                         (prjName.includes('tòa nhà công nghệ số') && !prjName.includes('02') && !prjName.includes('03'));
+                         prjCode.includes('cns-01') ||
+                         prjCode.includes('cns-1') ||
+                         prjCode.includes('cns1') ||
+                         prjName.includes('cns-1') ||
+                         prjName.includes('cns-01') ||
+                         prjName.includes('cns1') ||
+                         ((prjName.includes('tòa nhà công nghệ số') || prjName.includes('toà nhà công nghệ số')) && !prjName.includes('02') && !prjName.includes('03'));
 
     if (isCnsDoc && isCnsProject) return true;
 

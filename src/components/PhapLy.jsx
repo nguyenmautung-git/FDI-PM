@@ -1,4 +1,4 @@
-import React, { useState, useContext, useRef, useEffect } from 'react';
+import React, { useState, useContext, useRef, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import ReactDOM from 'react-dom';
 import { DocumentContext } from '../context/DocumentContext';
@@ -11,6 +11,7 @@ import { Plus, Edit2, Trash2, X, Check, Clock, Circle, ChevronDown, ChevronUp, A
 import { ROLES, STEP_STATUS, WORKFLOW_DEFAULT_STEPS, LEGAL_PHASES, LEGAL_TEMPLATES } from '../constants';
 import StepBadge, { STATUS_CONFIG } from './shared/StepBadge';
 import DocumentDetailModal from './DocumentDetailModal';
+import { isDocRelatedToProject } from '../utils/projectMatcher';
 
 
 
@@ -806,21 +807,48 @@ const ProjectLegalCard = ({
 const DocumentPickerModal = ({ project, documents = [], initialSelectedIds = [], onClose, onConfirm }) => {
   const [selectedIds, setSelectedIds] = useState(initialSelectedIds);
   const [search, setSearch] = useState('');
-  const [projectFilter, setProjectFilter] = useState(project?.name || 'ALL');
+  const [projectFilter, setProjectFilter] = useState('CURRENT');
+  const { allProjects: ctxProjects = [] } = useContext(DocumentContext);
+
+  const currentProjectDocsCount = useMemo(() => {
+    if (!project) return 0;
+    return (documents || []).filter(d => !d.isDeleted && isDocRelatedToProject(d, project)).length;
+  }, [documents, project]);
 
   const filteredDocs = (documents || []).filter(d => {
     if (d.isDeleted) return false;
-    const matchProj = projectFilter === 'ALL' || (d.relatedProjects || []).includes(projectFilter);
+
+    let matchProj = true;
+    if (projectFilter === 'CURRENT') {
+      matchProj = project ? isDocRelatedToProject(d, project) : true;
+    } else if (projectFilter === 'ALL') {
+      matchProj = true;
+    } else {
+      const targetPrj = ctxProjects.find(p => p.id === projectFilter || p.name === projectFilter);
+      if (targetPrj) {
+        matchProj = isDocRelatedToProject(d, targetPrj);
+      } else {
+        matchProj = (d.relatedProjects || []).some(item => {
+          const s = typeof item === 'object' ? (item.name || item.code || item.id) : item;
+          return s === projectFilter;
+        });
+      }
+    }
     if (!matchProj) return false;
 
     const q = search.trim().toLowerCase();
     if (!q) return true;
+    const relStr = (d.relatedProjects || []).map(p => typeof p === 'object' ? (p.name || p.code || p.id) : p).join(' ').toLowerCase();
+    const keywordsStr = Array.isArray(d.keywords) ? d.keywords.join(' ').toLowerCase() : (d.keywords || '').toLowerCase();
     return (
       (d.documentCode || '').toLowerCase().includes(q) ||
       (d.documentNumber || '').toLowerCase().includes(q) ||
       (d.summary || '').toLowerCase().includes(q) ||
       (d.issuingAgency || '').toLowerCase().includes(q) ||
-      (d.documentType || '').toLowerCase().includes(q)
+      (d.documentType || '').toLowerCase().includes(q) ||
+      (d.projectName || '').toLowerCase().includes(q) ||
+      relStr.includes(q) ||
+      keywordsStr.includes(q)
     );
   });
 
@@ -881,17 +909,30 @@ const DocumentPickerModal = ({ project, documents = [], initialSelectedIds = [],
             />
           </div>
 
-          <div style={{ minWidth: '260px' }}>
+          <div style={{ minWidth: '320px' }}>
             <select
               className="input-field"
               value={projectFilter}
               onChange={e => setProjectFilter(e.target.value)}
               style={{ fontSize: '0.85rem' }}
             >
-              <option value="ALL">📁 Tất cả dự án ({documents.length} tài liệu)</option>
-              {project?.name && (
-                <option value={project.name}>📍 Dự án hiện tại ({project.name})</option>
+              {project && (
+                <option value="CURRENT">
+                  📍 Dự án hiện tại ({project.code ? `${project.code} - ` : ''}{project.name}) ({currentProjectDocsCount} tài liệu)
+                </option>
               )}
+              <option value="ALL">📁 Tất cả tài liệu trong hệ thống ({documents.length} tài liệu)</option>
+              {ctxProjects
+                .filter(p => p.id !== project?.id && p.name !== project?.name)
+                .map(p => {
+                  const pCount = (documents || []).filter(d => !d.isDeleted && isDocRelatedToProject(d, p)).length;
+                  return (
+                    <option key={p.id} value={p.id}>
+                      📂 {p.code ? `${p.code} - ` : ''}{p.name} ({pCount} tài liệu)
+                    </option>
+                  );
+                })
+              }
             </select>
           </div>
         </div>
@@ -929,6 +970,10 @@ const DocumentPickerModal = ({ project, documents = [], initialSelectedIds = [],
                     const formattedDate = doc.effectiveDate && !isNaN(new Date(doc.effectiveDate).getTime())
                       ? format(new Date(doc.effectiveDate), 'dd/MM/yyyy')
                       : 'Chưa cập nhật';
+                    const relProjectsText = (doc.relatedProjects || [])
+                      .map(p => typeof p === 'object' ? (p.name || p.code || p.id) : p)
+                      .filter(Boolean)
+                      .join(', ');
 
                     return (
                       <tr
@@ -950,12 +995,17 @@ const DocumentPickerModal = ({ project, documents = [], initialSelectedIds = [],
                         </td>
                         <td style={{ padding: '12px', fontWeight: '600', color: 'var(--color-primary)', wordBreak: 'break-word', lineHeight: '1.4' }}>
                           {doc.documentNumber || doc.documentCode}
+                          {(doc.status === 'pending_approval' || doc.approvalStatus === 'pending') && (
+                            <span style={{ fontSize: '0.68rem', backgroundColor: 'rgba(234, 179, 8, 0.2)', color: '#eab308', padding: '2px 6px', borderRadius: '4px', marginLeft: '6px', fontWeight: '700' }}>
+                              Chờ duyệt
+                            </span>
+                          )}
                         </td>
                         <td style={{ padding: '12px' }}>
                           <span className="badge badge-yellow" style={{ fontSize: '0.72rem' }}>{doc.documentType || 'Khác'}</span>
                         </td>
                         <td style={{ padding: '12px', color: 'var(--color-text-muted)', wordBreak: 'break-word', lineHeight: '1.4' }}>
-                          {(doc.relatedProjects || []).join(', ') || 'Chưa gán'}
+                          {relProjectsText || 'Chưa gán'}
                         </td>
                         <td style={{ padding: '12px', color: 'var(--color-text-muted)', wordBreak: 'break-word', lineHeight: '1.4' }}>
                           {doc.issuingAgency || 'N/A'}
