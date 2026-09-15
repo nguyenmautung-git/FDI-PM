@@ -1,2 +1,0 @@
-var e=e=>({valid:Array.from(e||[]),errors:[]}),t=(e,t)=>Promise.race([e,new Promise((e,n)=>setTimeout(()=>n(Error(`TIMEOUT`)),t))]),n=e=>e.message===`TIMEOUT`||e.code===`storage/unauthorized`?`Firebase Storage chưa cho phép upload. Vào Firebase Console → Storage → Rules → đổi thành: allow read, write: if true;`:`Lỗi tải lên: ${e.message||`Vui lòng thử lại`}`;export{e as n,t as r,n as t};
-//# sourceMappingURL=uploadHelpers-BaN-ahRt.js.map
