@@ -32,6 +32,96 @@ export const normalizeCode = (s) => {
 };
 
 /**
+ * Kiểm tra xem một item (chuỗi tag, ID, mã, hoặc object) có khớp với dự án hay không.
+ */
+export const matchProjectWithItem = (item, project, originalProject = null) => {
+  if (!item || !project) return false;
+
+  const prjId = cleanStr(project.id || originalProject?.id);
+  const prjCode = cleanStr(project.code || originalProject?.code);
+  const prjCodeNorm = normalizeCode(project.code || originalProject?.code);
+  const prjCodeNN = cleanStr(project.codeNN || originalProject?.codeNN);
+  const prjName = cleanStr(project.name);
+  const origName = cleanStr(originalProject?.name);
+
+  let itemStr = '';
+  let itemId = '';
+  let itemCode = '';
+  if (typeof item === 'object') {
+    itemStr = cleanStr(item.name || item.title || item.code || item.id);
+    itemId = cleanStr(item.id);
+    itemCode = cleanStr(item.code);
+  } else {
+    itemStr = cleanStr(item);
+  }
+
+  if (!itemStr && !itemId && !itemCode) return false;
+
+  const itemNorm = normalizeCode(itemStr);
+
+  // 1. Khớp ID
+  if (prjId && (itemStr === prjId || itemId === prjId)) return true;
+
+  // 2. Khớp Mã dự án (CNS1 <-> CNS-01 <-> CNS-1)
+  if (prjCode && (itemStr === prjCode || itemCode === prjCode || itemNorm === prjCodeNorm)) return true;
+  if (prjCodeNorm && (itemNorm === prjCodeNorm || normalizeCode(itemCode) === prjCodeNorm)) return true;
+  if (prjCodeNN && (itemStr === prjCodeNN || itemCode === prjCodeNN)) return true;
+
+  // 3. Khớp chính xác Tên dự án (hiện tại hoặc tên gốc)
+  if (prjName && (itemStr === prjName || itemNorm === normalizeCode(prjName))) return true;
+  if (origName && (itemStr === origName || itemNorm === normalizeCode(origName))) return true;
+
+  // 4. Khớp tương đối nếu cả hai chuỗi có độ dài có nghĩa (> 5 ký tự)
+  if (prjName.length > 5 && itemStr.length > 5) {
+    if (itemStr.includes(prjName) || prjName.includes(itemStr)) return true;
+  }
+  if (origName && origName.length > 5 && itemStr.length > 5) {
+    if (itemStr.includes(origName) || origName.includes(itemStr)) return true;
+  }
+
+  // 5. Quy tắc riêng cho các dự án CNS (Công nghệ số 01 / CNS1 / CNS-01 / Tòa nhà công nghệ số 01)
+  const isCnsDoc = itemNorm.includes('cns1') || 
+                   itemNorm.includes('cns01') || 
+                   itemStr.includes('công nghệ số 01') || 
+                   itemStr.includes('công nghệ số 1') || 
+                   itemStr.includes('cns-01') ||
+                   itemStr.includes('cns-1') ||
+                   itemStr.includes('cns1') ||
+                   ((itemStr.includes('tòa nhà công nghệ số') || itemStr.includes('toà nhà công nghệ số')) && !itemStr.includes('02') && !itemStr.includes('03'));
+
+  const isCnsProject = prjCodeNorm.includes('cns1') || 
+                       prjCodeNorm.includes('cns01') || 
+                       prjName.includes('công nghệ số 01') || 
+                       prjName.includes('công nghệ số 1') || 
+                       prjCode.includes('cns-01') ||
+                       prjCode.includes('cns-1') ||
+                       prjCode.includes('cns1') ||
+                       prjName.includes('cns-1') ||
+                       prjName.includes('cns-01') ||
+                       prjName.includes('cns1') ||
+                       ((prjName.includes('tòa nhà công nghệ số') || prjName.includes('toà nhà công nghệ số')) && !prjName.includes('02') && !prjName.includes('03'));
+
+  if (isCnsDoc && isCnsProject) return true;
+
+  // 6. Quy tắc riêng cho GPMB: "Khu công viên công nghệ số và hỗn hợp" <-> "Khu đô thị Công viên công nghệ số FPT" <-> "GPMB-CNS"
+  const isGpmbDoc = itemStr.includes('công nghệ số và hỗn hợp') || 
+                    itemStr.includes('gpmb') ||
+                    itemStr === 'gpmb-cns' ||
+                    itemNorm === 'gpmbcns';
+
+  const isGpmbProject = prjCode === 'gpmb-cns' || 
+                        prjCodeNorm === 'gpmbcns' || 
+                        prjCode.includes('gpmb') ||
+                        prjName.includes('gpmb') ||
+                        prjName.includes('công viên công nghệ số fpt') || 
+                        prjName.includes('công nghệ số và hỗn hợp');
+
+  if (isGpmbDoc && isGpmbProject) return true;
+
+  return false;
+};
+
+/**
  * Kiểm tra xem một tài liệu (doc) có thuộc về dự án (project) hay không.
  * @param {Object} doc - Document object từ Firestore
  * @param {Object} project - Project object (có name, code, id...) hoặc formData trong Projects.jsx
@@ -41,113 +131,35 @@ export const normalizeCode = (s) => {
 export const isDocRelatedToProject = (doc, project, originalProject = null) => {
   if (!doc || doc.isDeleted || !project) return false;
 
-  const prjId = cleanStr(project.id || originalProject?.id);
-  const prjCode = cleanStr(project.code || originalProject?.code);
-  const prjCodeNorm = normalizeCode(project.code || originalProject?.code);
-  const prjCodeNN = cleanStr(project.codeNN || originalProject?.codeNN);
-  const prjName = cleanStr(project.name);
-  const origName = cleanStr(originalProject?.name);
-
-  // 1. Khớp qua các trường trực tiếp trên document: projectId, projectName
-  const docPrjId = cleanStr(doc.projectId);
-  const docPrjName = cleanStr(doc.projectName);
-
-  if (docPrjId) {
-    if (prjId && docPrjId === prjId) return true;
-    if (prjCode && docPrjId === prjCode) return true;
-    if (prjCodeNorm && normalizeCode(docPrjId) === prjCodeNorm) return true;
-  }
-
-  if (docPrjName) {
-    if (prjName && (docPrjName === prjName || prjName.includes(docPrjName) || docPrjName.includes(prjName))) return true;
-    if (origName && (docPrjName === origName || origName.includes(docPrjName) || docPrjName.includes(origName))) return true;
-    if (prjCode && docPrjName === prjCode) return true;
-    if (prjCodeNorm && normalizeCode(docPrjName) === prjCodeNorm) return true;
-
-    // Khớp CNS qua doc.projectName
-    const docPrjNorm = normalizeCode(docPrjName);
-    const isDocCns = docPrjNorm.includes('cns1') || docPrjNorm.includes('cns01') || docPrjName.includes('công nghệ số 01') || docPrjName.includes('công nghệ số 1') || ((docPrjName.includes('tòa nhà công nghệ số') || docPrjName.includes('toà nhà công nghệ số')) && !docPrjName.includes('02') && !docPrjName.includes('03'));
-    const isPrjCns = prjCodeNorm.includes('cns1') || prjCodeNorm.includes('cns01') || prjName.includes('công nghệ số 01') || prjName.includes('công nghệ số 1') || prjCode.includes('cns-01') || prjCode.includes('cns-1') || prjName.includes('cns-1') || ((prjName.includes('tòa nhà công nghệ số') || prjName.includes('toà nhà công nghệ số')) && !prjName.includes('02') && !prjName.includes('03'));
-    if (isDocCns && isPrjCns) return true;
-  }
-
-  // 2. Khớp qua mảng relatedProjects và keywords của document
   const rawList = doc.relatedProjects;
   const rawKw = doc.keywords;
   const kwList = Array.isArray(rawKw)
     ? rawKw
     : (typeof rawKw === 'string' && rawKw.trim() ? rawKw.split(',').map(s => s.trim()) : []);
-  const relList = [
-    ...(Array.isArray(rawList) ? rawList : (typeof rawList === 'string' && rawList.trim() ? [rawList] : [])),
-    ...kwList
-  ];
 
-  for (const item of relList) {
-    if (!item) continue;
-    
-    let itemStr;
-    let itemId = '';
-    let itemCode = '';
-    if (typeof item === 'object') {
-      itemStr = cleanStr(item.name || item.title || item.code || item.id);
-      itemId = cleanStr(item.id);
-      itemCode = cleanStr(item.code);
-    } else {
-      itemStr = cleanStr(item);
-    }
+  const hasRelatedProjects = Array.isArray(rawList)
+    ? rawList.length > 0
+    : (typeof rawList === 'string' && rawList.trim().length > 0);
 
-    if (!itemStr && !itemId && !itemCode) continue;
-
-    const itemNorm = normalizeCode(itemStr);
-
-    // Khớp ID
-    if (prjId && (itemStr === prjId || itemId === prjId)) return true;
-
-    // Khớp Mã dự án (CNS1 <-> CNS-01 <-> CNS-1)
-    if (prjCode && (itemStr === prjCode || itemCode === prjCode || itemNorm === prjCodeNorm)) return true;
-    if (prjCodeNorm && (itemNorm === prjCodeNorm || normalizeCode(itemCode) === prjCodeNorm)) return true;
-    if (prjCodeNN && (itemStr === prjCodeNN || itemCode === prjCodeNN)) return true;
-
-    // Khớp chính xác Tên dự án (hiện tại hoặc tên gốc)
-    if (prjName && (itemStr === prjName || itemNorm === normalizeCode(prjName))) return true;
-    if (origName && (itemStr === origName || itemNorm === normalizeCode(origName))) return true;
-
-    // Khớp tương đối nếu tên có độ dài có nghĩa (> 5 ký tự)
-    if (prjName.length > 5 && (itemStr.includes(prjName) || prjName.includes(itemStr))) return true;
-    if (origName && origName.length > 5 && (itemStr.includes(origName) || origName.includes(itemStr))) return true;
-
-    // Quy tắc riêng cho các dự án CNS (Công nghệ số 01 / CNS1 / CNS-01 / Tòa nhà công nghệ số 01)
-    const isCnsDoc = itemNorm.includes('cns1') || 
-                     itemNorm.includes('cns01') || 
-                     itemStr.includes('công nghệ số 01') || 
-                     itemStr.includes('công nghệ số 1') || 
-                     itemStr.includes('cns-01') ||
-                     itemStr.includes('cns-1') ||
-                     itemStr.includes('cns1') ||
-                     ((itemStr.includes('tòa nhà công nghệ số') || itemStr.includes('toà nhà công nghệ số')) && !itemStr.includes('02') && !itemStr.includes('03'));
-
-    const isCnsProject = prjCodeNorm.includes('cns1') || 
-                         prjCodeNorm.includes('cns01') || 
-                         prjName.includes('công nghệ số 01') || 
-                         prjName.includes('công nghệ số 1') || 
-                         prjCode.includes('cns-01') ||
-                         prjCode.includes('cns-1') ||
-                         prjCode.includes('cns1') ||
-                         prjName.includes('cns-1') ||
-                         prjName.includes('cns-01') ||
-                         prjName.includes('cns1') ||
-                         ((prjName.includes('tòa nhà công nghệ số') || prjName.includes('toà nhà công nghệ số')) && !prjName.includes('02') && !prjName.includes('03'));
-
-    if (isCnsDoc && isCnsProject) return true;
-
-    // Quy tắc FPT Park: "Khu công viên công nghệ số và hỗn hợp" <-> "Khu đô thị Công viên công nghệ số FPT"
-    if (
-      (itemStr.includes('công nghệ số và hỗn hợp') || itemStr === 'gpmb-cns') &&
-      (prjCode === 'gpmb-cns' || prjName.includes('công viên công nghệ số fpt') || prjName.includes('công nghệ số và hỗn hợp'))
-    ) {
+  // 1. ƯU TIÊN SỐ 1: Nếu tài liệu có mảng relatedProjects (được gán tag rõ ràng)
+  // Chỉ khớp nếu dự án nằm trong relatedProjects (hoặc keywords).
+  // Tuyệt đối không để projectId / projectName cũ gây khớp sai sang dự án khác.
+  if (hasRelatedProjects) {
+    const relList = Array.isArray(rawList) ? rawList : [rawList];
+    if (relList.some(item => matchProjectWithItem(item, project, originalProject))) {
       return true;
     }
+    if (kwList.some(item => matchProjectWithItem(item, project, originalProject))) {
+      return true;
+    }
+    return false;
   }
+
+  // 2. Dự phòng cho các tài liệu cũ chưa có relatedProjects:
+  // Khớp qua doc.projectId hoặc doc.projectName hoặc keywords
+  if (doc.projectId && matchProjectWithItem(doc.projectId, project, originalProject)) return true;
+  if (doc.projectName && matchProjectWithItem(doc.projectName, project, originalProject)) return true;
+  if (kwList.some(item => matchProjectWithItem(item, project, originalProject))) return true;
 
   return false;
 };
@@ -157,23 +169,5 @@ export const isDocRelatedToProject = (doc, project, originalProject = null) => {
  */
 export const isProjectSelected = (relatedProjects = [], p) => {
   if (!Array.isArray(relatedProjects) || !p) return false;
-  const pName = cleanStr(p.name);
-  const pCode = cleanStr(p.code);
-  const pCodeNorm = normalizeCode(p.code);
-  const pId = cleanStr(p.id);
-
-  return relatedProjects.some(item => {
-    if (!item) return false;
-    const str = cleanStr(typeof item === 'object' ? (item.name || item.code || item.id) : item);
-    const strNorm = normalizeCode(str);
-
-    if (pName && (str === pName || strNorm === normalizeCode(pName))) return true;
-    if (pCode && (str === pCode || strNorm === pCodeNorm)) return true;
-    if (pId && str === pId) return true;
-    
-    // Check CNS variants
-    if ((strNorm.includes('cns1') || strNorm.includes('cns01')) && (pCodeNorm.includes('cns1') || pCodeNorm.includes('cns01'))) return true;
-
-    return false;
-  });
+  return relatedProjects.some(item => matchProjectWithItem(item, p));
 };

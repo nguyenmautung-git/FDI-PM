@@ -12,7 +12,7 @@ import { EMPLOYEE_LEVELS } from '../data';
 import { auth, storage } from '../firebase';
 import { signOut, updateProfile } from 'firebase/auth';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { isDocRelatedToProject } from '../utils/projectMatcher';
+import { isDocRelatedToProject, isProjectSelected } from '../utils/projectMatcher';
 import RejectDocModal from './RejectDocModal';
 
 // ── Bảng màu Pastel & Màu nền linh hoạt cho Chế độ Sáng / Tối ─────────────
@@ -1017,16 +1017,20 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
 
   const getDocProjectName = (doc) => {
     if (!doc) return 'Dự án chung';
-    // 1. Khớp thông minh với danh sách dự án
+    // 1. Ưu tiên lấy tên dự án chuẩn từ tag relatedProjects đầu tiên
+    if (Array.isArray(doc.relatedProjects) && doc.relatedProjects.length > 0) {
+      const firstTag = doc.relatedProjects[0];
+      const matchedByTag = (allProjects || []).find(p => isDocRelatedToProject({ relatedProjects: [firstTag] }, p));
+      if (matchedByTag && matchedByTag.name) return matchedByTag.name;
+      return resolveProjectDisplayName(firstTag);
+    }
+    // 2. Khớp thông minh với danh sách dự án
     const matchedPrj = (allProjects || []).find(p => isDocRelatedToProject(doc, p));
     if (matchedPrj && matchedPrj.name) return matchedPrj.name;
 
     if (doc.projectId) {
       const found = (allProjects || []).find(p => String(p.id) === String(doc.projectId));
       if (found && found.name) return found.name;
-    }
-    if (Array.isArray(doc.relatedProjects) && doc.relatedProjects.length > 0) {
-      return resolveProjectDisplayName(doc.relatedProjects[0]);
     }
     if (doc.projectName) {
       return resolveProjectDisplayName(doc.projectName);
@@ -1405,7 +1409,10 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
         })
       );
 
-      const matchedPrj = (allProjects || []).find(p => (uploadFormState.relatedProjects || []).includes(p.code));
+      const matchedPrj = (allProjects || []).find(p => 
+        isProjectSelected(uploadFormState.relatedProjects, p) || 
+        isDocRelatedToProject({ relatedProjects: uploadFormState.relatedProjects }, p)
+      );
       const canApprove = userRole === 'Admin' || (canApproveDocs && canApproveDocs(matchedPrj?.id));
       const docStatus = canApprove ? 'approved' : 'pending_approval';
       const docApprovalStatus = canApprove ? 'approved' : 'pending';
@@ -1423,8 +1430,8 @@ const MobileDocumentApp = ({ onCloseMobileView }) => {
         minAccessLevel: uploadFormState.minAccessLevel || 1,
         accessLevels: [uploadFormState.minAccessLevel || 1],
         relatedProjects: uploadFormState.relatedProjects || [],
-        projectId: matchedPrj?.id || (allProjects[0]?.id || ''),
-        projectName: matchedPrj?.name || 'Dự án chung',
+        projectId: matchedPrj?.id || '',
+        projectName: matchedPrj?.name || (uploadFormState.relatedProjects?.[0] || 'Dự án chung'),
         attachments: finalAttachments,
         status: docStatus,
         approvalStatus: docApprovalStatus,

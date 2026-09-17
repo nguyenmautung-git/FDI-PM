@@ -1,12 +1,13 @@
 import React, { useState, useContext, useEffect } from 'react';
 import { format } from 'date-fns';
-import { X, Upload, Check, ChevronDown, Plus, Trash2, Folder, HardDrive, Info, AlertTriangle } from 'lucide-react';
+import { vi } from 'date-fns/locale';
+import { X, Upload, Check, ChevronDown, Plus, Trash2, Folder, HardDrive, Info, AlertTriangle, User, ShieldCheck, Clock, CheckCircle2, XCircle } from 'lucide-react';
 import { DocumentContext } from '../context/DocumentContext';
 import { useToast } from '../context/UIContext';
 import { EMPLOYEE_LEVELS } from '../data';
 import { v4 as uuidv4 } from 'uuid';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { storage } from '../firebase';
+import { storage, auth } from '../firebase';
 import { validateFileSize } from '../utils/uploadHelpers';
 import { 
   isFileSystemAccessSupported, 
@@ -15,10 +16,10 @@ import {
   pickDirectoryFilesWithHandle, 
   deleteLocalFile 
 } from '../utils/fileSystemHelpers';
-import { isProjectSelected } from '../utils/projectMatcher';
+import { isProjectSelected, matchProjectWithItem } from '../utils/projectMatcher';
 
 const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = false }) => {
-  const { addDocument, editDocument, allDocuments: documents, documentTypes, allProjects: projects, legalSteps = [], checkPermission, enableLazy, uniqueAgencies = [], addPartner } = useContext(DocumentContext);
+  const { addDocument, editDocument, allDocuments: documents, documentTypes, allProjects: projects, legalSteps = [], checkPermission, enableLazy, uniqueAgencies = [], addPartner, canApproveDocs, members = [], userRole } = useContext(DocumentContext);
   const toast = useToast();
 
   useEffect(() => {
@@ -198,20 +199,7 @@ const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = f
       const currentList = Array.isArray(prev.relatedProjects) ? [...prev.relatedProjects] : [];
       const isSelected = isProjectSelected(currentList, projectObj);
       if (isSelected) {
-        const pName = (projectObj.name || '').trim().toLowerCase();
-        const pCode = (projectObj.code || '').trim().toLowerCase();
-        const pCodeNorm = pCode.replace(/[-\s_]/g, '');
-        const pId = String(projectObj.id || '').trim().toLowerCase();
-
-        const filtered = currentList.filter(item => {
-          const s = String(typeof item === 'object' ? (item.name || item.code || item.id) : item).trim().toLowerCase();
-          const sNorm = s.replace(/[-\s_]/g, '');
-          if (pName && (s === pName || sNorm === pName.replace(/[-\s_]/g, ''))) return false;
-          if (pCode && (s === pCode || sNorm === pCodeNorm)) return false;
-          if (pId && s === pId) return false;
-          if ((sNorm.includes('cns1') || sNorm.includes('cns01')) && (pCodeNorm.includes('cns1') || pCodeNorm.includes('cns01'))) return false;
-          return true;
-        });
+        const filtered = currentList.filter(item => !matchProjectWithItem(item, projectObj));
         return { ...prev, relatedProjects: filtered };
       } else {
         return { ...prev, relatedProjects: [...currentList, projectObj.name] };
@@ -284,13 +272,41 @@ const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = f
         attachmentsData = [...attachmentsData, ...uploadedFiles];
       }
 
+      const currentUserEmail = auth.currentUser?.email || '';
+      const currentMember = members?.find(m => (m.email || '').toLowerCase().trim() === currentUserEmail.toLowerCase().trim());
+      const currentUserName = auth.currentUser?.displayName || currentMember?.name || currentUserEmail || 'Thành viên';
+      
+      const canApprove = userRole === 'Admin' || (canApproveDocs && canApproveDocs());
+      const docStatus = isEdit 
+        ? (initialData.status || 'approved')
+        : (canApprove ? 'approved' : 'pending_approval');
+      const docApprovalStatus = isEdit
+        ? (initialData.approvalStatus || (initialData.status === 'pending_approval' ? 'pending' : 'approved'))
+        : (canApprove ? 'approved' : 'pending');
+
+      let primaryPrj = null;
+      if (Array.isArray(formData.relatedProjects) && formData.relatedProjects.length > 0) {
+        primaryPrj = projects.find(p => isProjectSelected(formData.relatedProjects, p));
+      }
+
       const newDoc = {
         ...formData,
         attachments: attachmentsData, // Lưu dưới dạng mảng
-        uploader: isEdit ? (initialData.uploader || 'Quản Trị Viên') : 'Quản Trị Viên',
+        status: docStatus,
+        approvalStatus: docApprovalStatus,
+        createdByEmail: isEdit ? (initialData.createdByEmail || currentUserEmail) : currentUserEmail,
+        createdByName: isEdit ? (initialData.createdByName || currentUserName) : currentUserName,
+        uploader: isEdit ? (initialData.uploader || currentUserName) : currentUserName,
         createdAt: isEdit ? (initialData.createdAt || new Date().toISOString()) : new Date().toISOString(),
-        isNew: isEdit ? (initialData.isNew ?? false) : true
+        isNew: isEdit ? (initialData.isNew ?? false) : true,
+        projectId: primaryPrj ? primaryPrj.id : '',
+        projectName: primaryPrj ? primaryPrj.name : (formData.relatedProjects?.[0] ? (typeof formData.relatedProjects[0] === 'object' ? (formData.relatedProjects[0].name || '') : String(formData.relatedProjects[0])) : '')
       };
+
+      if (!isEdit && canApprove) {
+        newDoc.approvedBy = currentUserEmail;
+        newDoc.approvedAt = new Date().toISOString();
+      }
       
       // Xóa attachmentLink cũ khỏi db để tránh nhầm lẫn
       delete newDoc.attachmentLink;
@@ -304,9 +320,15 @@ const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = f
       
       if (isEdit) {
         await editDocument(initialData.id, newDoc);
+        toast.success('Cập nhật tài liệu thành công!');
       } else {
         newDoc.id = uuidv4();
         await addDocument(newDoc);
+        if (docStatus === 'pending_approval') {
+          toast.info('Tài liệu đã được tải lên và đang Chờ phê duyệt trước khi công khai.');
+        } else {
+          toast.success('Tải lên tài liệu thành công!');
+        }
       }
 
       // ── XỬ LÝ XÓA FILE GỐC TRÊN MÁY TÍNH NẾU ĐƯỢC CHỌN ──
@@ -341,6 +363,52 @@ const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = f
     }
   };
 
+  const currentUserEmail = auth.currentUser?.email || '';
+  const currentMember = members?.find(m => (m.email || '').toLowerCase().trim() === currentUserEmail.toLowerCase().trim());
+  const currentUserName = auth.currentUser?.displayName || currentMember?.name || currentUserEmail || 'Thành viên';
+
+  // Thông tin Người đăng
+  const displayUploaderName = isEdit || previewMode
+    ? (formData.createdByName || formData.uploader || (formData.createdByEmail ? formData.createdByEmail.split('@')[0] : 'Chưa cập nhật'))
+    : currentUserName;
+  const displayUploaderEmail = isEdit || previewMode
+    ? (formData.createdByEmail || '')
+    : currentUserEmail;
+  const displayUploadDate = (formData.createdAt && !isNaN(new Date(formData.createdAt).getTime()))
+    ? format(new Date(formData.createdAt), 'dd/MM/yyyy HH:mm', { locale: vi })
+    : (isEdit || previewMode ? 'Chưa cập nhật' : 'Tự động ghi nhận khi lưu');
+
+  // Thông tin Người duyệt đăng
+  const canApprove = userRole === 'Admin' || (canApproveDocs && canApproveDocs());
+  const isPending = formData.status === 'pending_approval' || formData.approvalStatus === 'pending';
+  const isRejected = formData.status === 'rejected' || formData.approvalStatus === 'rejected';
+
+  let displayApproverBadge;
+  let displayApproverDesc;
+
+  if (!isEdit && !previewMode) {
+    if (canApprove) {
+      displayApproverBadge = { text: 'Tự động phê duyệt', color: '#10b981', bg: 'rgba(16, 185, 129, 0.15)' };
+      displayApproverDesc = `${currentUserName} (Admin / Quyền duyệt)`;
+    } else {
+      displayApproverBadge = { text: 'Chờ phê duyệt', color: '#f97316', bg: 'rgba(249, 115, 22, 0.15)' };
+      displayApproverDesc = 'Sẽ gửi đến người có thẩm quyền phê duyệt trước khi công khai';
+    }
+  } else if (isPending) {
+    displayApproverBadge = { text: 'Đang chờ phê duyệt', color: '#f97316', bg: 'rgba(249, 115, 22, 0.15)' };
+    displayApproverDesc = 'Chưa được phê duyệt công khai';
+  } else if (isRejected) {
+    displayApproverBadge = { text: 'Bị từ chối', color: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' };
+    displayApproverDesc = formData.rejectedBy ? `${formData.rejectedBy}: ${formData.rejectionReason || 'Không phù hợp'}` : (formData.rejectionReason || 'Đã bị từ chối');
+  } else {
+    const approverName = formData.approvedByName || formData.approvedBy || 'Admin';
+    const approvedDate = formData.approvedAt && !isNaN(new Date(formData.approvedAt).getTime())
+      ? format(new Date(formData.approvedAt), 'dd/MM/yyyy HH:mm', { locale: vi })
+      : '';
+    displayApproverBadge = { text: 'Đã phê duyệt', color: '#10b981', bg: 'rgba(16, 185, 129, 0.15)' };
+    displayApproverDesc = approverName + (approvedDate ? ` · ${approvedDate}` : '');
+  }
+
   return (
     <div className="modal-overlay">
       <div className="modal-content" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -353,6 +421,67 @@ const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = f
         </div>
 
         <form onSubmit={handleSubmit} style={{ padding: '1.5rem', overflowY: 'auto' }}>
+          
+          {/* ── 2 MỤC THÔNG TIN TỰ ĐỘNG: NGƯỜI ĐĂNG & NGƯỜI DUYỆT ĐĂNG ── */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '1rem',
+            marginBottom: '1.25rem',
+            padding: '0.85rem 1rem',
+            backgroundColor: 'rgba(30, 41, 59, 0.65)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid rgba(255, 255, 255, 0.08)'
+          }}>
+            {/* Người đăng */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.35rem' }}>
+                <User size={14} color="#60a5fa" />
+                <span style={{ fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Người đăng</span>
+                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>(Tự động)</span>
+              </div>
+              <div style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-main)', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                <span>{displayUploaderName}</span>
+                {displayUploaderEmail && (
+                  <span style={{ fontSize: '0.75rem', color: '#60a5fa', fontWeight: '400' }}>
+                    &lt;{displayUploaderEmail}&gt;
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                🕒 {displayUploadDate}
+              </div>
+            </div>
+
+            {/* Người duyệt đăng */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: '#94a3b8', marginBottom: '0.35rem' }}>
+                <ShieldCheck size={14} color="#34d399" />
+                <span style={{ fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Người duyệt đăng</span>
+                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>(Tự động)</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                <span style={{
+                  fontSize: '0.75rem',
+                  fontWeight: '700',
+                  padding: '0.15rem 0.5rem',
+                  borderRadius: '6px',
+                  backgroundColor: displayApproverBadge.bg,
+                  color: displayApproverBadge.color,
+                  border: `1px solid ${displayApproverBadge.color}40`,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}>
+                  {displayApproverBadge.text}
+                </span>
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
+                {displayApproverDesc}
+              </div>
+            </div>
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
             <div className="form-group">
               <label className="form-label">Mã lưu tài liệu (Tự động)</label>
