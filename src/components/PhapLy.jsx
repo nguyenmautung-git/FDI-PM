@@ -40,8 +40,10 @@ const StepRow = ({
   canEditStep, canReorder,
   isDragging, isDragOver,
   onDragStart, onDragOver, onDrop, onDragEnd,
-  documents = [], onSelectDoc, onOpenStepDocs, project
+  documents = [], onSelectDoc, onOpenStepDocs, project,
+  isFocused = false
 }) => {
+  const rowRef = useRef(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const cfg = STATUS_CONFIG[step.status] || STATUS_CONFIG.pending;
   const Icon = cfg.icon;
@@ -50,8 +52,19 @@ const StepRow = ({
   const linkedDocs = (documents || []).filter(d => !d.isDeleted && d.legalStepId === step.id);
   const totalFilesCount = directAtts.length + linkedDocs.length;
 
+  useEffect(() => {
+    if (isFocused && rowRef.current) {
+      const timer = setTimeout(() => {
+        rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 350);
+      return () => clearTimeout(timer);
+    }
+  }, [isFocused]);
+
   return (
     <div
+      ref={rowRef}
+      id={`legal-step-${step.id}`}
       draggable={canReorder}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -61,9 +74,13 @@ const StepRow = ({
         display: 'flex', gap: '0.5rem', position: 'relative',
         opacity: isDragging ? 0.4 : 1,
         borderTop: isDragOver ? '2px solid var(--color-primary)' : '2px solid transparent',
-        borderRadius: isDragOver ? '4px 4px 0 0' : undefined,
-        transition: 'opacity 0.15s, border-color 0.1s',
+        borderRadius: isDragOver ? '4px 4px 0 0' : (isFocused ? '8px' : undefined),
+        transition: 'opacity 0.15s, border-color 0.1s, box-shadow 0.3s, background-color 0.3s',
         cursor: canReorder ? 'default' : undefined,
+        backgroundColor: isFocused ? 'rgba(99, 102, 241, 0.14)' : undefined,
+        boxShadow: isFocused ? '0 0 0 2px #6366f1, 0 4px 14px rgba(99, 102, 241, 0.3)' : undefined,
+        padding: isFocused ? '6px 8px' : '0 2px',
+        margin: isFocused ? '4px 0' : undefined
       }}
     >
       {/* Drag handle — chỉ Admin/Reorder mới thấy */}
@@ -209,7 +226,8 @@ const ProjectWorkflowDetail = ({
   isFullscreen = false,
   onSaveTemplate,
   onSelectDoc,
-  onOpenStepDocs
+  onOpenStepDocs,
+  focusedStepId = null
 }) => {
   const { updateLegalStep, addLegalStep, allDocuments: documents = [] } = useContext(DocumentContext);
   const toast = useToast();
@@ -218,6 +236,15 @@ const ProjectWorkflowDetail = ({
   const [dropIndex, setDropIndex] = useState(null);
   const [applyingTemplate, setApplyingTemplate] = useState(false);
   const [collapsedPhases, setCollapsedPhases] = useState({});
+
+  useEffect(() => {
+    if (focusedStepId) {
+      const target = steps.find(s => s.id === focusedStepId || String(s.id) === String(focusedStepId));
+      if (target && target.phase && collapsedPhases[target.phase]) {
+        setCollapsedPhases(prev => ({ ...prev, [target.phase]: false }));
+      }
+    }
+  }, [focusedStepId, steps, collapsedPhases]);
 
   const currentViewMode = isFullscreen ? viewMode : 'timeline';
 
@@ -310,9 +337,19 @@ const ProjectWorkflowDetail = ({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: isFullscreen ? '100%' : 'auto' }}>
-      {/* Tab switcher & Action Buttons row */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '0.5rem', flexWrap: 'wrap', gap: '10px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: isFullscreen ? '100%' : 'auto', flex: 1, minHeight: 0 }}>
+      {/* Tab switcher & Action Buttons row (Phần đáy của Khung đỏ) */}
+      <div style={{ 
+        flexShrink: 0, 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        marginBottom: '0.75rem', 
+        borderBottom: '1px solid var(--color-border)', 
+        paddingBottom: '0.5rem', 
+        flexWrap: 'wrap', 
+        gap: '10px' 
+      }}>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
             type="button"
@@ -415,16 +452,29 @@ const ProjectWorkflowDetail = ({
         </div>
       )}
 
-      {/* B. View Mode 1: Timeline Dọc (Phân theo Giai đoạn) */}
+      {/* B. View Mode 1: Timeline Dọc (Phân theo Giai đoạn) - Cuộn độc lập mượt mà */}
       {currentViewMode === 'timeline' && sorted.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', overflowY: isFullscreen ? 'auto' : 'visible', flex: isFullscreen ? 1 : 'none', paddingRight: isFullscreen ? '0.5rem' : 0 }}>
+        <div 
+          className="custom-scrollbar"
+          style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '1.25rem', 
+            overflowY: 'auto', 
+            maxHeight: isFullscreen ? 'none' : 'clamp(380px, calc(100vh - 430px), 650px)', 
+            flex: isFullscreen ? 1 : 'none', 
+            paddingRight: '0.5rem',
+            paddingBottom: '0.5rem',
+            scrollBehavior: 'smooth'
+          }}
+        >
           {Object.entries(LEGAL_PHASES).map(([phaseKey, phaseName]) => {
             const phaseSteps = sorted.filter(s => (s.phase || 'PHASE_1') === phaseKey);
             if (phaseSteps.length === 0) return null;
 
             return (
               <div key={phaseKey} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {/* Tiêu đề Phase */}
+                {/* Tiêu đề Phase - Cố định nhẹ khi cuộn trong phase */}
                 <div 
                   onClick={() => togglePhase(phaseKey)}
                   style={{
@@ -432,14 +482,20 @@ const ProjectWorkflowDetail = ({
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     fontSize: '0.78rem', fontWeight: '700', color: 'var(--color-primary)',
-                    padding: '6px 10px', backgroundColor: 'rgba(99,102,241,0.08)',
+                    padding: '6px 10px', 
+                    backgroundColor: 'rgba(99,102,241,0.12)',
+                    backdropFilter: 'blur(8px)',
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 5,
                     borderRadius: '6px', textTransform: 'uppercase', letterSpacing: '0.02em',
                     cursor: 'pointer',
                     userSelect: 'none',
                     transition: 'all 0.2s',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.1)'
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.15)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.08)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.2)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(99,102,241,0.12)' }}
                 >
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     {phaseName}
@@ -488,6 +544,7 @@ const ProjectWorkflowDetail = ({
                           onSelectDoc={onSelectDoc}
                           onOpenStepDocs={onOpenStepDocs}
                           project={project}
+                          isFocused={Boolean(focusedStepId && (step.id === focusedStepId || String(step.id) === String(focusedStepId)))}
                         />
                       );
                     })}
@@ -664,9 +721,17 @@ const ProjectLegalCard = ({
   project, steps, partners,
   canAddStep, canEditStep, canReorder,
   onAddStep, onEditStep, onDeleteStep, onMoveStep,
-  onMaximize, onSaveTemplate, customTemplates = [], onDeleteTemplate, onSelectDoc, onOpenStepDocs
+  onMaximize, onSaveTemplate, customTemplates = [], onDeleteTemplate, onSelectDoc, onOpenStepDocs,
+  focusedStepId = null,
+  forceExpand = false
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(forceExpand);
+
+  useEffect(() => {
+    if (forceExpand) {
+      setExpanded(true);
+    }
+  }, [forceExpand]);
 
   // Đếm các bước trễ hạn
   const overdueCount = steps.filter(s => {
@@ -678,128 +743,148 @@ const ProjectLegalCard = ({
   const progress = steps.length > 0 ? Math.round((done / steps.length) * 100) : 0;
 
   return (
-    <div className="card" style={{ overflow: 'hidden', transition: 'transform 0.2s, box-shadow 0.2s' }}>
-      {/* Header image */}
-      <div 
-        style={{ position: 'relative', height: '140px', overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.05)', cursor: 'pointer' }}
-        onClick={(e) => { e.stopPropagation(); onMaximize(); }}
-        title="Click để phóng to toàn màn hình"
-      >
-        {project.image
-          ? <img src={project.image} alt={project.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-          : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg,#667eea,#764ba2)', color: 'white', fontSize: '2rem' }}>🏗️</div>
-        }
-        <div style={{ position: 'absolute', top: '10px', left: '10px', backgroundColor: 'rgba(0,0,0,0.55)', color: 'white', padding: '3px 10px', borderRadius: '20px', fontSize: '0.7rem', fontWeight: '700', backdropFilter: 'blur(4px)' }}>
-          {project.code || 'N/A'}
-        </div>
-        <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '5px' }}>
-          {overdueCount > 0 && (
-            <div style={{
-              backgroundColor: '#ef4444', color: 'white', padding: '3px 10px', borderRadius: '20px',
-              fontSize: '0.7rem', fontWeight: '700', backdropFilter: 'blur(4px)',
-              boxShadow: '0 2px 8px rgba(239,68,68,0.5)', display: 'flex', alignItems: 'center', gap: '3px'
-            }}>
-              ⚠️ {overdueCount} trễ hạn
-            </div>
-          )}
-          <div style={{ backgroundColor: progress === 100 ? '#10b981' : 'rgba(0,0,0,0.55)', color: 'white', padding: '3px 10px', borderRadius: '20px', fontSize: '0.7rem', fontWeight: '700', backdropFilter: 'blur(4px)' }}>
-            {progress}% hoàn thành
-          </div>
-        </div>
-        
-        {/* Nút phóng to lơ lửng khi hover */}
-        <div style={{
-          position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          opacity: 0, transition: 'opacity 0.2s', color: 'white', fontSize: '0.85rem', fontWeight: '600'
-        }}
-        onMouseEnter={e => e.currentTarget.style.opacity = 1}
-        onMouseLeave={e => e.currentTarget.style.opacity = 0}
-        >
-          <Maximize2 size={18} style={{ marginRight: '6px' }} /> Phóng to toàn màn hình
-        </div>
-      </div>
-
-      {/* Body */}
-      <div style={{ padding: '1rem' }}>
-        <h3 
-          style={{ fontWeight: '700', fontSize: '0.95rem', color: 'var(--color-text-main)', marginBottom: '0.5rem', lineHeight: '1.3', cursor: 'pointer' }}
+    <div 
+      id={`legal-project-${project.id}`} 
+      className="card" 
+      style={{ 
+        overflow: 'hidden', 
+        transition: 'transform 0.2s, box-shadow 0.2s',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: expanded ? '0 10px 30px rgba(0, 0, 0, 0.22)' : 'var(--shadow-sm)',
+        border: expanded ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid var(--color-border)',
+      }}
+    >
+      {/* ── Khung đỏ cố định: Header Banner + Tiêu đề + Tiến độ + Nút thao tác ── */}
+      <div style={{
+        flexShrink: 0,
+        backgroundColor: 'var(--color-bg-surface)',
+        borderBottom: expanded ? '1px solid var(--color-border)' : 'none',
+      }}>
+        {/* Header image */}
+        <div 
+          style={{ position: 'relative', height: '140px', overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.05)', cursor: 'pointer' }}
           onClick={(e) => { e.stopPropagation(); onMaximize(); }}
           title="Click để phóng to toàn màn hình"
         >
-          {project.name}
-        </h3>
-        <div style={{ height: '6px', borderRadius: '3px', backgroundColor: 'var(--color-bg-surface-hover)', marginBottom: '0.75rem', overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: `${progress}%`, borderRadius: '3px', background: progress === 100 ? 'var(--color-success)' : 'linear-gradient(90deg,#6366f1,#8b5cf6)', transition: 'width 0.5s ease' }} />
-        </div>
-        <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
-          {done}/{steps.length} bước pháp lý • {steps.filter(s => s.status === STEP_STATUS.IN_PROGRESS).length} đang thực hiện
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: '8px' }}>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            {canAddStep && (
-              <button className="btn btn-outline" onClick={() => onAddStep(project)} style={{ fontSize: '0.78rem', padding: '4px 12px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}>
-                <Plus size={13} /> Thêm bước
-              </button>
-            )}
-            {canAddStep && steps.length === 0 && (
-              <button 
-                className="btn btn-outline" 
-                onClick={(e) => { e.stopPropagation(); setExpanded(true); }} 
-                style={{ fontSize: '0.78rem', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-success)', borderColor: 'rgba(16, 185, 129, 0.4)', backgroundColor: 'rgba(16, 185, 129, 0.1)' }}
-              >
-                📋 Áp dụng mẫu
-              </button>
-            )}
-            {canAddStep && steps.length > 0 && (
-              <button 
-                className="btn btn-outline" 
-                onClick={(e) => { e.stopPropagation(); onSaveTemplate(project, steps); }} 
-                style={{ fontSize: '0.78rem', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-primary)', borderColor: 'rgba(99, 102, 241, 0.4)', backgroundColor: 'rgba(99, 102, 241, 0.1)' }}
-                title="Lưu danh sách bước hiện tại thành quy trình mẫu"
-              >
-                💾 Lưu mẫu
-              </button>
-            )}
+          {project.image
+            ? <img src={project.image} alt={project.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg,#667eea,#764ba2)', color: 'white', fontSize: '2rem' }}>🏗️</div>
+          }
+          <div style={{ position: 'absolute', top: '10px', left: '10px', backgroundColor: 'rgba(0,0,0,0.55)', color: 'white', padding: '3px 10px', borderRadius: '20px', fontSize: '0.7rem', fontWeight: '700', backdropFilter: 'blur(4px)' }}>
+            {project.code || 'N/A'}
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto', alignItems: 'center' }}>
-            <button 
-              onClick={(e) => { e.stopPropagation(); onMaximize(); }} 
-              style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', padding: '4px' }}
-              title="Phóng to toàn màn hình"
-            >
-              <Maximize2 size={13} />
-            </button>
-            <button onClick={() => setExpanded(v => !v)} style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              {expanded ? <><ChevronUp size={14} /> Thu gọn</> : <><ChevronDown size={14} /> Xem workflow</>}
-            </button>
+          <div style={{ position: 'absolute', top: '10px', right: '10px', display: 'flex', gap: '5px' }}>
+            {overdueCount > 0 && (
+              <div style={{
+                backgroundColor: '#ef4444', color: 'white', padding: '3px 10px', borderRadius: '20px',
+                fontSize: '0.7rem', fontWeight: '700', backdropFilter: 'blur(4px)',
+                boxShadow: '0 2px 8px rgba(239,68,68,0.5)', display: 'flex', alignItems: 'center', gap: '3px'
+              }}>
+                ⚠️ {overdueCount} trễ hạn
+              </div>
+            )}
+            <div style={{ backgroundColor: progress === 100 ? '#10b981' : 'rgba(0,0,0,0.55)', color: 'white', padding: '3px 10px', borderRadius: '20px', fontSize: '0.7rem', fontWeight: '700', backdropFilter: 'blur(4px)' }}>
+              {progress}% hoàn thành
+            </div>
+          </div>
+          
+          {/* Nút phóng to lơ lửng khi hover */}
+          <div style={{
+            position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            opacity: 0, transition: 'opacity 0.2s', color: 'white', fontSize: '0.85rem', fontWeight: '600'
+          }}
+          onMouseEnter={e => e.currentTarget.style.opacity = 1}
+          onMouseLeave={e => e.currentTarget.style.opacity = 0}
+          >
+            <Maximize2 size={18} style={{ marginRight: '6px' }} /> Phóng to toàn màn hình
           </div>
         </div>
 
-        {expanded && (
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--color-border)' }}>
-            <ProjectWorkflowDetail
-              project={project}
-              steps={steps}
-              partners={partners}
-              canAddStep={canAddStep}
-              canEditStep={canEditStep}
-              canReorder={canReorder}
-              onAddStep={onAddStep}
-              onEditStep={onEditStep}
-              onDeleteStep={onDeleteStep}
-              onMoveStep={onMoveStep}
-              customTemplates={customTemplates}
-              onDeleteTemplate={onDeleteTemplate}
-              isFullscreen={false}
-              onSaveTemplate={onSaveTemplate}
-              onSelectDoc={onSelectDoc}
-              onOpenStepDocs={onOpenStepDocs}
-            />
+        {/* Body Info */}
+        <div style={{ padding: '1rem' }}>
+          <h3 
+            style={{ fontWeight: '700', fontSize: '0.95rem', color: 'var(--color-text-main)', marginBottom: '0.5rem', lineHeight: '1.3', cursor: 'pointer' }}
+            onClick={(e) => { e.stopPropagation(); onMaximize(); }}
+            title="Click để phóng to toàn màn hình"
+          >
+            {project.name}
+          </h3>
+          <div style={{ height: '6px', borderRadius: '3px', backgroundColor: 'var(--color-bg-surface-hover)', marginBottom: '0.75rem', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${progress}%`, borderRadius: '3px', background: progress === 100 ? 'var(--color-success)' : 'linear-gradient(90deg,#6366f1,#8b5cf6)', transition: 'width 0.5s ease' }} />
           </div>
-        )}
+          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+            {done}/{steps.length} bước pháp lý • {steps.filter(s => s.status === STEP_STATUS.IN_PROGRESS).length} đang thực hiện
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              {canAddStep && (
+                <button className="btn btn-outline" onClick={() => onAddStep(project)} style={{ fontSize: '0.78rem', padding: '4px 12px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}>
+                  <Plus size={13} /> Thêm bước
+                </button>
+              )}
+              {canAddStep && steps.length === 0 && (
+                <button 
+                  className="btn btn-outline" 
+                  onClick={(e) => { e.stopPropagation(); setExpanded(true); }} 
+                  style={{ fontSize: '0.78rem', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-success)', borderColor: 'rgba(16, 185, 129, 0.4)', backgroundColor: 'rgba(16, 185, 129, 0.1)' }}
+                >
+                  📋 Áp dụng mẫu
+                </button>
+              )}
+              {canAddStep && steps.length > 0 && (
+                <button 
+                  className="btn btn-outline" 
+                  onClick={(e) => { e.stopPropagation(); onSaveTemplate(project, steps); }} 
+                  style={{ fontSize: '0.78rem', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--color-primary)', borderColor: 'rgba(99, 102, 241, 0.4)', backgroundColor: 'rgba(99, 102, 241, 0.1)' }}
+                  title="Lưu danh sách bước hiện tại thành quy trình mẫu"
+                >
+                  💾 Lưu mẫu
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto', alignItems: 'center' }}>
+              <button 
+                onClick={(e) => { e.stopPropagation(); onMaximize(); }} 
+                style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', padding: '4px' }}
+                title="Phóng to toàn màn hình"
+              >
+                <Maximize2 size={13} />
+              </button>
+              <button onClick={() => setExpanded(v => !v)} style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {expanded ? <><ChevronUp size={14} /> Thu gọn</> : <><ChevronDown size={14} /> Xem workflow</>}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* ── Workflow detail khi mở rộng (Cuộn độc lập) ── */}
+      {expanded && (
+        <div style={{ padding: '0.75rem 1rem 1rem 1rem', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <ProjectWorkflowDetail
+            project={project}
+            steps={steps}
+            partners={partners}
+            canAddStep={canAddStep}
+            canEditStep={canEditStep}
+            canReorder={canReorder}
+            onAddStep={onAddStep}
+            onEditStep={onEditStep}
+            onDeleteStep={onDeleteStep}
+            onMoveStep={onMoveStep}
+            customTemplates={customTemplates}
+            onDeleteTemplate={onDeleteTemplate}
+            isFullscreen={false}
+            onSaveTemplate={onSaveTemplate}
+            onSelectDoc={onSelectDoc}
+            onOpenStepDocs={onOpenStepDocs}
+            focusedStepId={focusedStepId}
+          />
+        </div>
+      )}
     </div>
   );
 };
@@ -1885,7 +1970,7 @@ const StepDocsModal = ({ step, project, directAtts = [], linkedDocs = [], onClos
 };
 
 /* ─── Main Page ─── */
-const PhapLy = () => {
+const PhapLy = ({ navigationFocus, onClearFocus }) => {
   const { projects, legalSteps, addLegalStep, updateLegalStep, deleteLegalStep, userRole, partners, enableLazy, checkPermission, allDocuments = [] } = useContext(DocumentContext);
   const toast = useToast();
   const confirm = useConfirm();
@@ -1903,6 +1988,8 @@ const PhapLy = () => {
   const [savingTemplateProject, setSavingTemplateProject] = useState(null);
   const [selectedPreviewDoc, setSelectedPreviewDoc] = useState(null);
   const [activeStepDocs, setActiveStepDocs] = useState(null);
+
+  const handledNavRef = useRef(null);
 
   // Lắng nghe quy trình mẫu tùy chỉnh từ Firestore
   useEffect(() => {
@@ -2059,6 +2146,45 @@ const PhapLy = () => {
   const safePage = Math.min(currentPage, totalPages);
   const pagedProjects = filteredProjects.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
+  // Tự động điều hướng và mở thẻ cần xử lý khi được truyền navigationFocus
+  useEffect(() => {
+    if (!navigationFocus || !navigationFocus.stepId) return;
+    if (handledNavRef.current === navigationFocus) return;
+
+    const targetProject = projects.find(p => 
+      p.id === navigationFocus.projectId || 
+      String(p.id) === String(navigationFocus.projectId) ||
+      (navigationFocus.item?.projectName && p.name === navigationFocus.item.projectName)
+    );
+
+    const targetStep = legalSteps.find(s => 
+      s.id === navigationFocus.stepId || 
+      String(s.id) === String(navigationFocus.stepId)
+    );
+
+    if (targetProject) {
+      const pStatus = targetProject.status || 'Chưa bắt đầu';
+      if (!selectedStatuses.includes(pStatus)) {
+        setSelectedStatuses(prev => [...prev, pStatus]);
+      }
+
+      const allMatching = projects.filter(p => {
+        const status = p.status || 'Chưa bắt đầu';
+        return selectedStatuses.length === 0 || selectedStatuses.includes(status) || status === pStatus;
+      });
+      const pIdx = allMatching.findIndex(p => p.id === targetProject.id || String(p.id) === String(targetProject.id));
+      if (pIdx >= 0) {
+        setCurrentPage(Math.floor(pIdx / PAGE_SIZE) + 1);
+      }
+
+      if (targetStep) {
+        handleEdit(targetProject, targetStep);
+        handledNavRef.current = navigationFocus;
+        if (onClearFocus) onClearFocus();
+      }
+    }
+  }, [navigationFocus, projects, legalSteps, selectedStatuses, onClearFocus]);
+
   return (
     <div className="fade-in" style={{ padding: '1.5rem', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header */}
@@ -2133,6 +2259,10 @@ const PhapLy = () => {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1.5rem', alignItems: 'start', flex: 1, paddingBottom: '1rem' }}>
             {pagedProjects.map(project => {
               const steps = legalSteps.filter(s => s.projectId === project.id || s.projectId === project.id?.toString());
+              const isProjectTarget = Boolean(
+                (navigationFocus?.projectId && (project.id === navigationFocus.projectId || String(project.id) === String(navigationFocus.projectId))) ||
+                (navigationFocus?.stepId && steps.some(s => s.id === navigationFocus.stepId || String(s.id) === String(navigationFocus.stepId)))
+              );
               return (
                 <ProjectLegalCard
                   key={project.id}
@@ -2152,6 +2282,8 @@ const PhapLy = () => {
                   onDeleteTemplate={handleDeleteTemplate}
                   onSelectDoc={(doc) => setSelectedPreviewDoc(doc)}
                   onOpenStepDocs={(step, proj, docs) => setActiveStepDocs({ step, project: proj, docs })}
+                  focusedStepId={navigationFocus?.stepId}
+                  forceExpand={isProjectTarget}
                 />
               );
             })}
@@ -2360,6 +2492,7 @@ const PhapLy = () => {
                 onSaveTemplate={(proj) => setSavingTemplateProject(proj)}
                 onSelectDoc={(doc) => setSelectedPreviewDoc(doc)}
                 onOpenStepDocs={(step, proj, docs) => setActiveStepDocs({ step, project: proj, docs })}
+                focusedStepId={navigationFocus?.stepId}
               />
             </div>
             
