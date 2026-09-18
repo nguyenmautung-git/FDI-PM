@@ -16,7 +16,7 @@ import {
   pickDirectoryFilesWithHandle, 
   deleteLocalFile 
 } from '../utils/fileSystemHelpers';
-import { isProjectSelected, matchProjectWithItem } from '../utils/projectMatcher';
+import { isProjectSelected, matchProjectWithItem, cleanStr, normalizeCode } from '../utils/projectMatcher';
 
 const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = false }) => {
   const { addDocument, editDocument, allDocuments: documents, documentTypes, allProjects: projects, legalSteps = [], checkPermission, enableLazy, uniqueAgencies = [], addPartner, canApproveDocs, members = [], userRole } = useContext(DocumentContext);
@@ -199,7 +199,30 @@ const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = f
       const currentList = Array.isArray(prev.relatedProjects) ? [...prev.relatedProjects] : [];
       const isSelected = isProjectSelected(currentList, projectObj);
       if (isSelected) {
-        const filtered = currentList.filter(item => !matchProjectWithItem(item, projectObj));
+        const pId = cleanStr(projectObj.id);
+        const pName = cleanStr(projectObj.name);
+        const pCode = cleanStr(projectObj.code);
+        const pCodeNorm = normalizeCode(projectObj.code);
+
+        const filtered = currentList.filter(item => {
+          if (!item) return false;
+          let itemStr = '';
+          let itemId = '';
+          let itemCode = '';
+          if (typeof item === 'object') {
+            itemStr = cleanStr(item.name || item.title || item.code || item.id);
+            itemId = cleanStr(item.id);
+            itemCode = cleanStr(item.code);
+          } else {
+            itemStr = cleanStr(item);
+          }
+          const itemNorm = normalizeCode(itemStr);
+
+          const isThis = (pId && (itemStr === pId || itemId === pId)) ||
+                         (pName && (itemStr === pName || itemNorm === normalizeCode(pName))) ||
+                         (pCode && (itemStr === pCode || itemCode === pCode || itemNorm === pCodeNorm));
+          return !isThis;
+        });
         return { ...prev, relatedProjects: filtered };
       } else {
         return { ...prev, relatedProjects: [...currentList, projectObj.name] };
@@ -673,7 +696,7 @@ const DocumentForm = ({ onClose, initialData, initialFiles = [], previewMode = f
                 {/* 1. Nếu đã chọn dự án liên quan -> hiển thị các bước thuộc dự án đó */}
                 {(formData.relatedProjects || []).length > 0 ? (
                   projects
-                    .filter(p => (formData.relatedProjects || []).includes(p.name))
+                    .filter(p => isProjectSelected(formData.relatedProjects, p))
                     .map(p => {
                       const stepsOfProject = legalSteps
                         .filter(s => s.projectId === p.id || s.projectId === p.id?.toString())
